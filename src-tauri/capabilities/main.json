@@ -1,0 +1,1 @@
+{"identifier":"desktop","description":"Main window events, confirmations and pickers","windows":["main"],"permissions":["core:event:default","dialog:allow-open","dialog:allow-ask"]}

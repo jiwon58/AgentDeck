@@ -1,0 +1,43 @@
+[package]
+name = "agent-deck"
+version = "0.1.6"
+edition = "2021"
+default-run = "agent-deck"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+test-fixture = []
+
+[[bin]]
+name = "mock-agent"
+path = "src/bin/mock-agent.rs"
+required-features = ["test-fixture"]
+
+[[test]]
+name = "mvp"
+path = "tests/mvp.rs"
+required-features = ["test-fixture"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+portable-pty = "0.9"
+rusqlite = { version = "0.38", features = ["bundled"] }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt"] }
+wait-timeout = "0.2"
+dunce = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }
+
+[dev-dependencies]
+tempfile = "3"
+
