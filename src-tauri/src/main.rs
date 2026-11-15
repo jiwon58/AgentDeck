@@ -69,6 +69,8 @@ fn main() {
             commands::save_router,
             commands::delete_router,
             commands::probe_router,
+            commands::list_router_models,
+            commands::test_router_model,
             commands::save_preferences,
             commands::import_settings,
             commands::start_session,

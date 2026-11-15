@@ -237,6 +237,31 @@ pub async fn probe_router(profile: Router, token: String) -> Result<router::Prob
 }
 
 #[tauri::command]
+pub async fn list_router_models(
+    profile: Router,
+    token: String,
+    protocol: router::ModelProtocol,
+) -> Result<router::ModelCatalog> {
+    blocking("router.model_catalog_failed", move || {
+        router::list_models(&profile, &token, protocol)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn test_router_model(
+    profile: Router,
+    token: String,
+    protocol: router::ModelProtocol,
+    model: String,
+) -> Result<router::ModelTest> {
+    blocking("router.model_test_failed", move || {
+        router::test_model(&profile, &token, protocol, &model)
+    })
+    .await
+}
+
+#[tauri::command]
 pub fn save_preferences(deck: State<'_, Deck>, font_size: u16, scrollback: u32) -> Result<()> {
     let mut preferences = prefs(&deck)?;
     preferences.font_size = font_size.clamp(10, 26);

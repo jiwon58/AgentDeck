@@ -30,3 +30,4 @@ Windows desktop smoke procedure:
 
 Record real Agent smoke tests separately from mock and router results. For each real version, record executable hash, supported launch flags, provider transport and tested environment controls.
 
+The router models checks cover paginated Anthropic catalogs, exact model IDs on inference requests, and a running OpenAI-compatible router whose catalog changes between refreshes. The WebView smoke checks that a removed model disappears from the list and its inference test reports HTTP 404.

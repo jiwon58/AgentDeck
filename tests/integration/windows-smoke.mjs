@@ -10,12 +10,23 @@ const application = resolve(process.argv[2] ?? 'target/release/agent-deck.exe');
 const fixture = resolve(process.argv[3] ?? 'target/release/mock-agent.exe');
 const root = await mkdtemp(join(tmpdir(), 'agent-deck-smoke-'));
 let resumedContextSeen = false;
+let servedModels = ['mock-local', 'old-model'];
 const mock = createServer((request, response) => {
   if (request.method === 'POST' && request.url === '/v1/chat/completions') {
     let body = '';
     request.on('data', chunk => { body += chunk; });
     request.once('end', () => {
-      const messages = JSON.parse(body).messages;
+      const input = JSON.parse(body);
+      const messages = input.messages;
+      if (input.stream === false) {
+        if (!servedModels.includes(input.model)) {
+          response.writeHead(404).end('{"error":{"message":"missing model"}}');
+        } else {
+          response.writeHead(200, { 'Content-Type': 'application/json' })
+            .end('{"choices":[{"message":{"content":"OK"}}]}');
+        }
+        return;
+      }
       const ask = messages.at(-1)?.role === 'user' && JSON.stringify(messages.at(-1).content).includes('Deck ask status probe');
       if (messages.at(-1)?.role === 'user' && JSON.stringify(messages.at(-1).content).includes('Deck resumed context probe')) {
         resumedContextSeen = messages.slice(0, -1).some(message =>
@@ -45,7 +56,8 @@ const mock = createServer((request, response) => {
     return;
   }
   if (request.url !== '/v1/models') { response.writeHead(404).end(); return; }
-  response.writeHead(200, { 'Content-Type': 'application/json' }).end('{"data":[{"id":"mock-local"}]}');
+  response.writeHead(200, { 'Content-Type': 'application/json' })
+    .end(JSON.stringify({ data: servedModels.map(id => ({ id })) }));
 });
 await new Promise(resolve => mock.listen(0, '127.0.0.1', resolve));
 const debugPort = await new Promise(resolve => {
@@ -144,7 +156,7 @@ async function click(text, index = 0) {
     const scope = document.querySelector('dialog[open]') ?? document;
     const button = Array.from(scope.querySelectorAll('button')).filter(button =>
       (button.textContent.trim() === text || button.getAttribute('aria-label') === text) && button.getClientRects().length)[index];
-    if (!button || button.disabled) return false;
+    if (!button || button.matches(':disabled')) return false;
     button.click();
     return true;
   }, text, index), `button ${text}`);
@@ -240,6 +252,22 @@ try {
   await field('Temporary connection test token', fakeToken);
   await click('Test Connection');
   await waitText('.settings-body', 'Model list available');
+  await click('Refresh models');
+  await waitText('.settings-body', '2 listed');
+  await field('Discovered models', 'old-model');
+  await click('Test model');
+  await waitText('.settings-body', 'Model responded · HTTP 200');
+  await click('Use as default');
+  servedModels = ['mock-local', 'new-model'];
+  await click('Refresh models');
+  await waitText('.settings-body', 'Default model is absent');
+  await waitText('.settings-body select option', 'new-model');
+  assert.equal(await evaluate(() => [...document.querySelectorAll('[aria-label="Router models"] option')]
+    .some(option => option.value === 'old-model')), false);
+  await field('Model ID to test', 'old-model');
+  await click('Test model');
+  await waitText('.settings-body', 'Model or API route not found · HTTP 404');
+  await field('Default model', '');
   await field('Authentication', 'none');
   await click('Save profile');
   const router = await eventually(async () => (await overview()).routers.find(profile => profile.name === routerName), 'saved router');

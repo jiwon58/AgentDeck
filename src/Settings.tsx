@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { api, browse, environment, lines, readable } from './api';
+import { RouterModels } from './RouterModels';
 import { agents, agentKeys, type Agent, type Candidate, type Overview, type Probe, type Router } from './types';
 
 type Refresh = () => Promise<void>;
@@ -130,14 +131,19 @@ function RouterSettings({ data, refresh, task }: { data: Overview; refresh: Refr
   const [profile, setProfile] = useState<Router>(emptyRouter);
   const [token, setToken] = useState('');
   const [result, setResult] = useState<Probe>();
-  const patch = (change: Partial<Router>) => { setProfile({ ...profile, ...change }); setResult(undefined); };
+  const [modelContext, setModelContext] = useState(0);
+  const resetModels = () => { setResult(undefined); setModelContext(current => current + 1); };
+  const patch = (change: Partial<Router>) => {
+    setProfile({ ...profile, ...change });
+    if (Object.keys(change).some(key => key !== 'model' && key !== 'name' && key !== 'enabled')) resetModels();
+  };
   return <div className="stack">
     <div className="row end"><label className="grow">Router profile<select value={profile.id} onChange={e => {
-      setProfile(data.routers.find(item => item.id === e.target.value) ?? emptyRouter); setResult(undefined); setToken('');
+      setProfile(data.routers.find(item => item.id === e.target.value) ?? emptyRouter); setToken(''); resetModels();
     }}><option value="">New profile</option>{data.routers.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-      {profile.id && <button onClick={() => void task(async () => { await api.remove('router', profile.id); setProfile(emptyRouter); setToken(''); setResult(undefined); await refresh(); })}>Remove</button>}
+      {profile.id && <button onClick={() => void task(async () => { await api.remove('router', profile.id); setProfile(emptyRouter); setToken(''); resetModels(); await refresh(); })}>Remove</button>}
     </div>
-    <form className="stack" onSubmit={e => { e.preventDefault(); void task(async () => { setProfile(await api.router(profile)); setToken(''); await refresh(); }); }}>
+    <form className="stack" onSubmit={e => { e.preventDefault(); void task(async () => { setProfile(await api.router(profile)); setToken(''); resetModels(); await refresh(); }); }}>
       <label>Profile name<input required value={profile.name} onChange={e => patch({ name: e.target.value })} /></label>
       <div className="address"><label>Scheme<select value={profile.scheme} onChange={e => patch({ scheme: e.target.value })}><option>http</option><option>https</option></select></label>
         <label>Host<input required value={profile.host} onChange={e => patch({ host: e.target.value, allow_remote: false })} /></label>
@@ -150,17 +156,14 @@ function RouterSettings({ data, refresh, task }: { data: Overview; refresh: Refr
       </div>
       <div className="two"><label>Default model<input value={profile.model} onChange={e => patch({ model: e.target.value })} /></label>
         <label>Authentication<select value={profile.authentication} onChange={e => { patch({ authentication: e.target.value as Router['authentication'] }); setToken(''); }}><option value="none">None</option><option value="bearer">Bearer token at launch</option></select></label></div>
-      {profile.authentication === 'bearer' && <label>Temporary connection test token<input type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)} /></label>}
+      {profile.authentication === 'bearer' && <label>Temporary connection test token<input type="password" autoComplete="off" value={token} onChange={e => { setToken(e.target.value); resetModels(); }} /></label>}
       <details><summary>Advanced network settings</summary><label className="check"><input type="checkbox" checked={profile.allow_remote} onChange={e => patch({ allow_remote: e.target.checked })} /> I allow connections to this non-loopback host</label>
         <small>Credentials and Agent requests can leave this computer. Confirm the host and transport.</small></details>
       <label className="check"><input type="checkbox" checked={profile.enabled} onChange={e => patch({ enabled: e.target.checked })} /> Enabled for new sessions</label>
       <div className="row"><button className="accent">Save profile</button><button type="button" disabled={!profile.port || !profile.name} onClick={() => void task(async () => setResult(await api.probe(profile, token)))}>Test Connection</button></div>
-      {result && <div className="notice" role="status">TCP {result.tcp}{result.http && ` · HTTP ${result.http}`} · {result.result}
-        {result.models.length > 0 && <label>Choose discovered default model<select value={profile.model} onChange={e => setProfile({ ...profile, model: e.target.value })}>
-          <option value={profile.model}>{profile.model || 'Select a model'}</option>{result.models.filter(model => model !== profile.model).map(model => <option key={model}>{model}</option>)}
-        </select></label>}
-      </div>}
+      {result && <div className="notice" role="status">TCP {result.tcp}{result.http && ` · HTTP ${result.http}`} · {result.result}</div>}
     </form>
+    <RouterModels key={modelContext} profile={profile} token={token} task={task} onDefault={model => patch({ model })} />
   </div>;
 }
 

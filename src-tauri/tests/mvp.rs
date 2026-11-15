@@ -8,7 +8,7 @@ use agent_deck::{
 use portable_pty::CommandBuilder;
 use std::{
     fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
     path::Path,
     thread,
@@ -16,6 +16,88 @@ use std::{
 };
 
 const MOCK: &str = env!("CARGO_BIN_EXE_mock-agent");
+
+#[test]
+fn anthropic_catalog_paginates_and_model_test_requires_text() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind model API");
+    let mut router = profile(listener.local_addr().expect("address").port());
+    router.anthropic_path = Some("/claude/v1/".into());
+    router.authentication = "bearer".into();
+    let server = thread::spawn(move || {
+        for (route, reply) in [
+            (
+                "GET /claude/v1/models ",
+                r#"{"data":[{"id":"model-b"}],"has_more":true,"last_id":"model-b"}"#,
+            ),
+            (
+                "GET /claude/v1/models?after_id=model-b ",
+                r#"{"data":[{"id":"model-a"},{"id":"model-b"}],"has_more":false}"#,
+            ),
+            (
+                "POST /claude/v1/messages ",
+                r#"{"content":[{"type":"text","text":"OK"}]}"#,
+            ),
+            (
+                "POST /claude/v1/messages ",
+                r#"{"content":[{"type":"thinking","thinking":"internal"}]}"#,
+            ),
+        ] {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .expect("timeout");
+            let mut reader = BufReader::new(&mut stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("request line");
+            assert!(line.starts_with(route), "{line}");
+            let mut headers = String::new();
+            loop {
+                line.clear();
+                if reader.read_line(&mut line).expect("header") == 0 || line == "\r\n" {
+                    break;
+                }
+                headers.push_str(&line.to_ascii_lowercase());
+            }
+            assert!(headers.contains("authorization: bearer fixture"));
+            assert!(headers.contains("anthropic-version: 2023-06-01"));
+            if route.starts_with("POST") {
+                let len: usize = headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length: "))
+                    .expect("length")
+                    .parse()
+                    .expect("number");
+                let mut body = vec![0; len];
+                reader.read_exact(&mut body).expect("request body");
+                let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON request");
+                assert_eq!(body["model"], "model-a");
+                assert_eq!(body["max_tokens"], 64);
+                assert_eq!(body["messages"][0]["content"], router::MODEL_TEST_PROMPT);
+            }
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                reply.len()
+            )
+            .expect("response");
+        }
+    });
+    let api = router::ModelProtocol::Anthropic;
+    let catalog = router::list_models(&router, "fixture", api).expect("catalog");
+    assert!(catalog.complete);
+    assert_eq!(catalog.models, ["model-a", "model-b"]);
+    assert!(
+        router::test_model(&router, "fixture", api, "model-a")
+            .expect("text")
+            .responded
+    );
+    assert!(
+        !router::test_model(&router, "fixture", api, "model-a")
+            .expect("no text")
+            .responded
+    );
+    server.join().expect("model API");
+}
 
 fn copy_mock(dir: &Path, file: &str) -> String {
     fs::create_dir_all(dir).expect("fixture directory");

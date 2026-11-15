@@ -1,7 +1,12 @@
 use crate::model::{error, Result, Router};
-use reqwest::{blocking::Client, Url};
-use serde::Serialize;
+use reqwest::{
+    blocking::{Client, RequestBuilder, Response},
+    Url,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
+    collections::BTreeSet,
     io::Read,
     net::{IpAddr, TcpStream, ToSocketAddrs},
     time::{Duration, Instant},
@@ -73,6 +78,258 @@ pub fn validate(profile: &Router) -> Result<()> {
         endpoint(profile, path)?;
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelProtocol {
+    Openai,
+    Anthropic,
+}
+
+impl ModelProtocol {
+    fn resource(self, profile: &Router, resource: &str) -> Result<Url> {
+        let path = match self {
+            Self::Openai => profile.openai_path.as_deref(),
+            Self::Anthropic => profile.anthropic_path.as_deref(),
+        }
+        .ok_or("Enable the selected API protocol first")?;
+        let base = endpoint(profile, path)?;
+        let mut url = Url::parse(&base).map_err(error)?;
+        let prefix = url.path().trim_end_matches('/');
+        let version = if matches!(self, Self::Anthropic) && !prefix.ends_with("/v1") {
+            "/v1"
+        } else {
+            ""
+        };
+        url.set_path(&format!("{prefix}{version}/{resource}"));
+        Ok(url)
+    }
+
+    fn request(self, request: RequestBuilder, profile: &Router, token: &str) -> RequestBuilder {
+        let request = if profile.authentication == "bearer" && !token.is_empty() {
+            request.bearer_auth(token)
+        } else {
+            request
+        };
+        match self {
+            Self::Anthropic => request.header("anthropic-version", "2023-06-01"),
+            Self::Openai => request,
+        }
+    }
+}
+
+fn http_client(timeout: Duration) -> Result<Client> {
+    Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout)
+        .build()
+        .map_err(error)
+}
+
+fn response_json(response: Response) -> Option<Value> {
+    const MAX_BODY: u64 = 512 * 1024;
+    let mut bytes = Vec::new();
+    response.take(MAX_BODY + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > MAX_BODY {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn http_failure(status: u16) -> &'static str {
+    match status {
+        401 | 403 => "Authentication required or rejected",
+        404 => "Model or API route not found",
+        408 | 504 => "Router timed out",
+        429 => "Router rate or quota limit reached",
+        500..=599 => "Router or model backend failed",
+        300..=399 => "Router requested a redirect",
+        _ => "Router rejected the request",
+    }
+}
+
+#[derive(Serialize)]
+pub struct ModelCatalog {
+    pub models: Vec<String>,
+    pub complete: bool,
+    pub http: Option<u16>,
+    pub message: &'static str,
+}
+
+pub fn list_models(profile: &Router, token: &str, protocol: ModelProtocol) -> Result<ModelCatalog> {
+    const MAX_MODELS: usize = 1000;
+    validate(profile)?;
+    let url = protocol.resource(profile, "models")?;
+    let client = http_client(Duration::from_secs(5))?;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut catalog = ModelCatalog {
+        models: vec![],
+        complete: false,
+        http: None,
+        message: "Model catalog limit reached",
+    };
+    let mut ids = BTreeSet::new();
+    let mut cursors = BTreeSet::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..10 {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            catalog.message = "Model list request timed out";
+            break;
+        }
+        let mut page = url.clone();
+        if let Some(cursor) = &cursor {
+            page.query_pairs_mut().append_pair("after_id", cursor);
+        }
+        let request = client
+            .get(page)
+            .timeout(remaining.min(Duration::from_secs(5)));
+        let response = match protocol.request(request, profile, token).send() {
+            Ok(response) => response,
+            Err(err) => {
+                catalog.http = None;
+                catalog.message = if err.is_timeout() {
+                    "Model list request timed out"
+                } else {
+                    "Could not reach the model catalog"
+                };
+                break;
+            }
+        };
+        let status = response.status();
+        catalog.http = Some(status.as_u16());
+        if !status.is_success() {
+            catalog.message = http_failure(status.as_u16());
+            break;
+        }
+        let Some(body) = response_json(response) else {
+            catalog.message = "Unreadable or oversized model list response";
+            break;
+        };
+        let Some(models) = body["data"].as_array() else {
+            catalog.message = "Router did not return a model list";
+            break;
+        };
+        for id in models
+            .iter()
+            .filter_map(|model| model["id"].as_str())
+            .filter(|id| valid_model_id(id))
+        {
+            if ids.len() == MAX_MODELS && !ids.contains(id) {
+                catalog.models = ids.into_iter().collect();
+                return Ok(catalog);
+            }
+            ids.insert(id.to_owned());
+        }
+        if body["has_more"] != true {
+            catalog.complete = true;
+            catalog.message = "Model list refreshed";
+            break;
+        }
+        let Some(next) = body["last_id"].as_str().filter(|id| valid_model_id(id)) else {
+            catalog.message = "Router did not supply a pagination cursor";
+            break;
+        };
+        if !matches!(protocol, ModelProtocol::Anthropic) || !cursors.insert(next.to_owned()) {
+            catalog.message = "Router returned unsupported or repeated pagination";
+            break;
+        }
+        cursor = Some(next.to_owned());
+    }
+    catalog.models = ids.into_iter().collect();
+    Ok(catalog)
+}
+
+fn valid_model_id(id: &str) -> bool {
+    !id.trim().is_empty() && id.len() <= 512 && !id.chars().any(char::is_control)
+}
+
+pub const MODEL_TEST_PROMPT: &str = "Reply with OK.";
+
+#[derive(Serialize)]
+pub struct ModelTest {
+    pub responded: bool,
+    pub http: Option<u16>,
+    pub elapsed_ms: u64,
+    pub message: &'static str,
+}
+
+pub fn test_model(
+    profile: &Router,
+    token: &str,
+    protocol: ModelProtocol,
+    model: &str,
+) -> Result<ModelTest> {
+    validate(profile)?;
+    if !valid_model_id(model) {
+        return Err("Enter a valid model ID".into());
+    }
+    let (resource, token_field) = match protocol {
+        ModelProtocol::Openai => ("chat/completions", "max_completion_tokens"),
+        ModelProtocol::Anthropic => ("messages", "max_tokens"),
+    };
+    let url = protocol.resource(profile, resource)?;
+    let client = http_client(Duration::from_secs(20))?;
+    let mut body = json!({
+        "model": model, "stream": false,
+        "messages": [{"role": "user", "content": MODEL_TEST_PROMPT}],
+    });
+    body[token_field] = json!(64);
+    let started = Instant::now();
+    let request = protocol
+        .request(client.post(url), profile, token)
+        .json(&body);
+    let (responded, http, message) = match request.send() {
+        Ok(response) => {
+            let code = response.status().as_u16();
+            if response.status().is_success() {
+                let text = |value: &Value| value.as_str().is_some_and(|s| !s.trim().is_empty());
+                let has_reply = response_json(response).is_some_and(|body| match protocol {
+                    ModelProtocol::Openai => text(&body["choices"][0]["message"]["content"]),
+                    ModelProtocol::Anthropic => body["content"].as_array().is_some_and(|parts| {
+                        parts
+                            .iter()
+                            .any(|part| part["type"] == "text" && text(&part["text"]))
+                    }),
+                });
+                (
+                    has_reply,
+                    Some(code),
+                    if has_reply {
+                        "Model responded"
+                    } else {
+                        "Router returned no readable model text"
+                    },
+                )
+            } else {
+                (false, Some(code), http_failure(code))
+            }
+        }
+        Err(err) => (
+            false,
+            None,
+            if err.is_timeout() {
+                "Model request timed out"
+            } else {
+                "Could not reach the model endpoint"
+            },
+        ),
+    };
+    crate::diagnostics::record(
+        if responded { "INFO" } else { "WARN" },
+        "router.model_test_result",
+        Some(&profile.id),
+        http.map(i64::from),
+        Some(message),
+    );
+    Ok(ModelTest {
+        responded,
+        http,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+        message,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -171,12 +428,7 @@ fn probe(profile: &Router, token: &str) -> Result<Probe> {
             endpoint(profile, profile.anthropic_path.as_deref().unwrap_or(""))?
         ),
     };
-    let client = Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(3))
-        .build()
-        .map_err(error)?;
+    let client = http_client(Duration::from_secs(3))?;
     let mut request = client.get(request_url);
     if profile.authentication == "bearer" && !token.is_empty() {
         request = request.bearer_auth(token);

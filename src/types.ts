@@ -40,4 +40,7 @@ export type TerminalEvent = { session_id: string; sequence_number: number } & (
   { event_type: 'terminal_started' | 'terminal_resized'; payload: unknown }
 );
 export interface Probe { tcp: string; http: number | null; result: string; models: string[] }
+export type ModelProtocol = 'openai' | 'anthropic';
+export interface ModelCatalog { models: string[]; complete: boolean; http: number | null; message: string }
+export interface ModelTest { responded: boolean; http: number | null; elapsed_ms: number; message: string }
 

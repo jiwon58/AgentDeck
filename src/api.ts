@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { Agent, Candidate, Launch, Overview, Probe, Router, Runtime, TerminalEvent } from './types';
+import type { Agent, Candidate, Launch, ModelCatalog, ModelProtocol, ModelTest, Overview, Probe, Router, Runtime, TerminalEvent } from './types';
 
 export const api = {
   overview: () => invoke<Overview>('overview'),
@@ -13,6 +13,10 @@ export const api = {
   remove: (type: 'root' | 'runtime' | 'router' | 'session', id: string) => invoke<void>(`delete_${type}`, { id }),
   router: (profile: Router) => invoke<Router>('save_router', { profile }),
   probe: (profile: Router, token: string) => invoke<Probe>('probe_router', { profile, token }),
+  listModels: (profile: Router, token: string, protocol: ModelProtocol) =>
+    invoke<ModelCatalog>('list_router_models', { profile, token, protocol }),
+  testModel: (profile: Router, token: string, protocol: ModelProtocol, model: string) =>
+    invoke<ModelTest>('test_router_model', { profile, token, protocol, model }),
   preferences: (fontSize: number, scrollback: number) => invoke<void>('save_preferences', { fontSize, scrollback }),
   importSettings: (fontSize: number, scrollback: number, profiles: unknown[]) =>
     invoke<void>('import_settings', { fontSize, scrollback, profiles }),
