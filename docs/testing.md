@@ -1,5 +1,13 @@
 # Testing
 
+The session-tools smoke test searches and bookmarks retained output, verifies that read-only blocks typed and pasted input, compares two live terminals, checks reply navigation, and reopens the app to verify saved project grouping and pins.
+
+Set `DECK_GJC_CHECK_STATUS=1` with both GJC executable paths to cover the 0.10.2 rendered indicators, the 0.20.0 native status protocol, and restoration of a real queued draft with Alt+Up. Run `node --experimental-strip-types tests/integration/terminal-keys.mjs` for the modifier-encoding checks. With internet access, `DECK_INSTALL_ONLY=1` and `DECK_PUBLISHER_DOWNLOADS=1` exercise the publisher download UI, inspect and run Claude Code's version command, validate Hermes bootstrap destination resolution, and reject a modified Hermes script.
+
+The Windows smoke test also uses pointer events to click the terminal scrollbar track and drag its thumb. The GJC 0.20.0 resume test sends a follow-up after reopening Deck and checks that GJC appends it to the original conversation file and Deck keeps one history row.
+
+Agent Deck 0.1.8 Windows verification adds GJC preset resolution and migration tests, a legacy scope vector suite, a v2 Volume GUID hash vector, and configuration lock, backup and unchanged-file tests. Build the WebView smoke binary with `--features custom-protocol,test-fixture` to isolate its database and logs in a temporary directory. The smoke covers preset creation, launch preview, blocked stale previews, concurrent launches with the same config, live config conflict, and mocked Claude/Hermes/Generic regressions. With `DECK_GJC_0102` and `DECK_GJC_0200` set to the verified release binaries, it also checks `--list-models`, OpenAI inference against loopback, native session directory parity and the built-in Resume picker. The 0.20.0 binary also sends an authenticated Anthropic Messages request to the local fixture. `DECK_GJC_PRESET_ONLY=1` runs the preset-focused subset.
+
 ```powershell
 npm ci
 npm run build
@@ -10,7 +18,7 @@ cargo test --locked --features custom-protocol,test-fixture
 
 The offline test fixture is `mock-agent.exe` in the Cargo build directory. It reports a version on stderr, prints its working directory with ANSI color, echoes input, streams output for `stream 1500`, and returns a selected exit code for `exit 7`. Test traffic is limited to local mock HTTP listeners on OS-assigned ports. Build-time dependency downloads are separate.
 
-To automate the packaged WebView smoke test on a dedicated test desktop, use `node tests/integration/windows-smoke.mjs <agent-deck.exe> <mock-agent.exe>`. It uses WebView2’s localhost debugging endpoint for that child process, a temporary WebView profile, a system-only PATH and Chromium resolver rules that reject external hostnames. It writes temporary runtime, router and session records to the regular application database and attempts to remove those records at the end. The application may retain the test workspace as the last-used path. Optionally set `DECK_GJC_0102` and `DECK_GJC_0200` to approved official binaries to exercise each real TUI without inference.
+To automate the WebView smoke test, use `node tests/integration/windows-smoke.mjs <agent-deck.exe> <mock-agent.exe>` with a `test-fixture` build. It uses WebView2’s localhost debugging endpoint for the child process, a temporary WebView profile and database, a system-only PATH, and Chromium resolver rules that reject external hostnames. Optionally set `DECK_GJC_0102` and `DECK_GJC_0200` to approved official binaries to exercise each real TUI against the loopback fixture.
 
 The diagnostic log checks cover Settings path display, persisted nonzero exit and router status codes, restore validation failure across a restart, and omission of the temporary token, session name, executable path and terminal output. A Rust unit test exercises log rotation and retention.
 

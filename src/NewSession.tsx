@@ -1,11 +1,28 @@
 import { useState } from 'react';
 import { browse, environment, lines, readable } from './api';
+import { GjcPresetLaunch } from './GjcPresets';
 import { agents, agentKeys, type Agent, type Launch, type Overview, type Session } from './types';
 
-export function NewSession({ data, previous, resume, runningPaths, onLaunch, onSettings }: {
+type Props = {
   data: Overview; previous?: Session; resume?: boolean; runningPaths: string[];
   onLaunch: (launch: Launch) => void; onSettings: () => void;
-}) {
+};
+
+export function NewSession(props: Props) {
+  const { data, previous, resume } = props;
+  const preferred = data.runtimes.find(item => item.id === data.preferences.last_runtime);
+  const hasPreset = data.gjc_presets.some(preset => preset.enabled);
+  const [presetMode, setPresetMode] = useState(Boolean(previous?.gjc) || (!previous && hasPreset && (!preferred || preferred.agent === 'gajae')));
+  return <div className="stack">
+    {!resume && <nav className="settings-nav" aria-label="Launch configuration">
+      <button type="button" className={presetMode ? 'selected' : ''} onClick={() => setPresetMode(true)}>GJC preset</button>
+      <button type="button" className={!presetMode ? 'selected' : ''} onClick={() => setPresetMode(false)}>Agent runtime</button>
+    </nav>}
+    {presetMode ? <GjcPresetLaunch {...props} /> : <RuntimeLaunch {...props} />}
+  </div>;
+}
+
+function RuntimeLaunch({ data, previous, resume, runningPaths, onLaunch, onSettings }: Props) {
   const preferred = data.runtimes.find(item => item.id === (previous?.runtime_id ?? data.preferences.last_runtime));
   const [agent, setAgent] = useState<Agent>(previous?.agent ?? preferred?.agent ?? data.runtimes[0]?.agent ?? 'gajae');
   const [runtimeId, setRuntime] = useState(preferred?.id ?? '');
@@ -35,10 +52,10 @@ export function NewSession({ data, previous, resume, runningPaths, onLaunch, onS
     } catch (reason) { setError(readable(reason)); }
   }}>
     {previous && <p className="notice">{resume
-      ? 'Gajae-Code will open its conversation picker. Choose the conversation to continue. Re-enter any credentials and profile or storage overrides.'
+      ? 'Choose the conversation to continue in the Gajae-Code picker. This terminal stays attached to the saved session. Re-enter credentials and any storage overrides.'
       : 'This starts a new process using today’s settings. Enter any credentials and advanced overrides again.'}</p>}
     {error && <p role="alert" className="notice danger">{error}</p>}
-    <label>Session name<input value={name} onChange={e => setName(e.target.value)} required autoFocus /></label>
+    <label>Session name<input value={name} readOnly={resume} onChange={e => setName(e.target.value)} required autoFocus /></label>
     <div className="two">
       <label>Agent<select value={agent} disabled={resume} onChange={e => { setAgent(e.target.value as Agent); setRuntime(''); setManual(false); setToken(''); }}>
         {agentKeys.map(key => <option key={key} value={key}>{agents[key]}</option>)}</select></label>

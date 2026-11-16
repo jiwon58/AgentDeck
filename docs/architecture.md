@@ -1,5 +1,7 @@
 # Architecture
 
+GJC preset launch resolution, configuration locking, and history compatibility are described in [GJC presets and session history](gjc-presets.md).
+
 A single Tauri window hosts React and xterm.js. The Rust backend owns discovery, trust, SQLite and live PTYs. SQLite stores settings and immutable launch snapshots. The in-memory terminal manager owns live process handles. Restart creates a new process using the current profile rather than reconnecting to a previous PTY.
 
 Implementation order: establish the shell and migration; verify the mock PTY; connect discovery and trust; add adapters and router checks; verify concurrent sessions; package the Windows release.

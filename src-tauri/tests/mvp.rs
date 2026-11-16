@@ -393,3 +393,34 @@ fn sqlite_migration_and_settings_survive_reopen() {
         8001
     );
 }
+
+#[test]
+fn preset_migration_preserves_v1_database() {
+    let root = tempfile::tempdir().expect("temporary directory");
+    let db = root.path().join("old.db");
+    let original = rusqlite::Connection::open(&db).unwrap();
+    original
+        .execute_batch(include_str!("../migrations/001_initial.sql"))
+        .unwrap();
+    let prefs = Preferences {
+        last_cwd: "original workspace".into(),
+        ..Preferences::default()
+    };
+    original
+        .execute(
+            "INSERT INTO application_settings (id, document) VALUES ('terminal', ?1)",
+            [serde_json::to_string(&prefs).unwrap()],
+        )
+        .unwrap();
+    drop(original);
+    let store = Store::open(&db).unwrap();
+    let restored = store
+        .get::<Preferences>(Table::Settings, "terminal")
+        .unwrap()
+        .unwrap();
+    assert_eq!(restored.last_cwd, prefs.last_cwd);
+    assert!(store
+        .list::<agent_deck::gjc::GjcPreset>(Table::GjcPresets)
+        .unwrap()
+        .is_empty());
+}

@@ -136,38 +136,7 @@ pub fn binding(agent: Agent, launch: &Launch, profile: Option<&Router>) -> Resul
             result.model = profile.model.clone();
         }
         for_agent(agent).configure(profile, launch, &mut result)?;
-        let host = profile.host.trim_matches(['[', ']']);
-        let mut no_proxy = Vec::new();
-        for value in [
-            std::env::var("NO_PROXY").ok(),
-            std::env::var("no_proxy").ok(),
-            result
-                .env
-                .iter()
-                .find(|(key, _)| key.eq_ignore_ascii_case("NO_PROXY"))
-                .map(|(_, value)| value.clone()),
-            Some(host.into()),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            for part in value
-                .split(',')
-                .map(str::trim)
-                .filter(|part| !part.is_empty())
-            {
-                if !no_proxy
-                    .iter()
-                    .any(|entry: &String| entry.eq_ignore_ascii_case(part))
-                {
-                    no_proxy.push(part.to_owned());
-                }
-            }
-        }
-        let value = no_proxy.join(",");
-        set(&mut result.env, "NO_PROXY", value.clone());
-        #[cfg(not(windows))]
-        result.env.insert("no_proxy".into(), value);
+        merge_no_proxy(&mut result.env, &profile.host, inherited_no_proxy());
     }
     Ok(result)
 }
@@ -196,4 +165,48 @@ pub fn apply_router_environment(binding: &mut Binding, variables: &BTreeMap<Stri
             set(&mut binding.env, key, value.clone());
         }
     }
+}
+
+pub fn inherited_no_proxy() -> [Option<String>; 2] {
+    [
+        std::env::var("NO_PROXY").ok(),
+        std::env::var("no_proxy").ok(),
+    ]
+}
+
+pub fn merge_no_proxy(
+    env: &mut BTreeMap<String, String>,
+    host: &str,
+    inherited: [Option<String>; 2],
+) {
+    let host = host.trim_matches(['[', ']']);
+    let mut no_proxy = Vec::new();
+    for value in [
+        inherited[0].clone(),
+        inherited[1].clone(),
+        env.iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("NO_PROXY"))
+            .map(|(_, value)| value.clone()),
+        Some(host.into()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for part in value
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+        {
+            if !no_proxy
+                .iter()
+                .any(|entry: &String| entry.eq_ignore_ascii_case(part))
+            {
+                no_proxy.push(part.to_owned());
+            }
+        }
+    }
+    let value = no_proxy.join(",");
+    set(env, "NO_PROXY", value.clone());
+    #[cfg(not(windows))]
+    env.insert("no_proxy".into(), value);
 }

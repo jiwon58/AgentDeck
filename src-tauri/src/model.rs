@@ -49,9 +49,11 @@ pub struct Runtime {
     pub name: String,
     pub version: String,
     pub executable: Candidate,
+    #[serde(default)]
     pub arguments: Vec<String>,
     pub root: String,
     pub cwd_override: Option<String>,
+    #[serde(default)]
     pub dependencies: String,
     #[serde(default)]
     pub router_environment: BTreeMap<String, String>,
@@ -94,9 +96,12 @@ pub struct Session {
     pub created_at: u64,
     #[serde(default)]
     pub resume_source_id: Option<String>,
+    #[serde(default)]
+    pub gjc: Option<crate::gjc::HistorySnapshot>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
+#[serde(default)]
 pub struct Launch {
     pub id: String,
     pub resume_from: Option<String>,
@@ -113,6 +118,7 @@ pub struct Launch {
     pub manual_protocol: String,
     pub cols: u16,
     pub rows: u16,
+    pub gjc: Option<crate::gjc::Selection>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -140,7 +146,16 @@ pub struct Overview {
     pub runtimes: Vec<Runtime>,
     pub routers: Vec<Router>,
     pub sessions: Vec<Session>,
+    pub gjc_presets: Vec<crate::gjc::GjcPreset>,
     pub preferences: Preferences,
+    pub session_layout: SessionLayout,
     pub data_directory: String,
     pub log_file: Option<String>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionLayout {
+    pub grouped: bool,
+    pub pinned: std::collections::BTreeSet<String>,
 }

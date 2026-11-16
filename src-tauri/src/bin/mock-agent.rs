@@ -23,6 +23,16 @@ fn main() -> io::Result<()> {
     );
     for line in io::stdin().lock().lines() {
         let line = line?;
+        if line == "inspect launch" {
+            println!(
+                "fixture argv={args:?}\nfixture timeout={}\nfixture host={}\nfixture mode={}",
+                std::env::var("GJC_OPENAI_STREAM_IDLE_TIMEOUT_MS").unwrap_or_default(),
+                std::env::var("GJC_HOST_STATUS").unwrap_or_default(),
+                std::env::var("DECK_FIXTURE_MODE").unwrap_or_default()
+            );
+            io::stdout().flush()?;
+            continue;
+        }
         if let Some(code) = line
             .strip_prefix("exit ")
             .and_then(|code| code.trim().parse().ok())
@@ -38,10 +48,15 @@ fn main() -> io::Result<()> {
         }
         if let Some(count) = line
             .strip_prefix("stream ")
+            .or_else(|| line.strip_prefix("scrollback "))
             .and_then(|count| count.trim().parse::<usize>().ok())
         {
             for index in 0..count.min(100_000) {
                 println!("stream {index} {}", "x".repeat(80));
+                if line.starts_with("scrollback ") {
+                    io::stdout().flush()?;
+                    std::thread::sleep(std::time::Duration::from_millis(12));
+                }
             }
         } else {
             println!("echo: {line}");

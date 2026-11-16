@@ -17,7 +17,17 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            diagnostics::init(app.path().app_log_dir().ok().as_deref());
+            #[cfg(feature = "test-fixture")]
+            let fixture_directory = std::env::var_os("AGENT_DECK_TEST_DATA_DIR")
+                .map(std::path::PathBuf::from)
+                .filter(|path| path.is_absolute());
+            #[cfg(not(feature = "test-fixture"))]
+            let fixture_directory: Option<std::path::PathBuf> = None;
+            let log_directory = fixture_directory
+                .as_ref()
+                .map(|path| path.join("logs"))
+                .or_else(|| app.path().app_log_dir().ok());
+            diagnostics::init(log_directory.as_deref());
             diagnostics::record(
                 "INFO",
                 "app.starting",
@@ -25,11 +35,14 @@ fn main() {
                 None,
                 Some(env!("CARGO_PKG_VERSION")),
             );
-            let path = diagnostics::stage(
-                app.path().app_data_dir(),
-                "storage.resolve_directory_failed",
-                None,
-            )?;
+            let path = match fixture_directory {
+                Some(path) => path,
+                None => diagnostics::stage(
+                    app.path().app_data_dir(),
+                    "storage.resolve_directory_failed",
+                    None,
+                )?,
+            };
             diagnostics::stage(
                 std::fs::create_dir_all(&path),
                 "storage.create_directory_failed",
@@ -46,6 +59,8 @@ fn main() {
                 terminal: Arc::new(Terminal::default()),
                 directory: path.to_string_lossy().into_owned(),
                 allow_close: AtomicBool::new(false),
+                configuration: std::sync::Mutex::new(()),
+                hermes_download: std::sync::Mutex::new(None),
             });
             diagnostics::info("app.ready", None);
             Ok(())
@@ -61,6 +76,10 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::overview,
+            commands::set_session_pin,
+            commands::set_session_grouping,
+            commands::download_agent,
+            commands::install_hermes,
             commands::scan,
             commands::delete_root,
             commands::inspect_executable,
@@ -73,6 +92,9 @@ fn main() {
             commands::test_router_model,
             commands::save_preferences,
             commands::import_settings,
+            commands::save_gjc_preset,
+            commands::delete_gjc_preset,
+            commands::preview_gjc_preset,
             commands::start_session,
             commands::close_terminal,
             commands::terminal_events,

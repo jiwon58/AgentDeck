@@ -1,9 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { Agent, Candidate, Launch, ModelCatalog, ModelProtocol, ModelTest, Overview, Probe, Router, Runtime, TerminalEvent } from './types';
+import type { Agent, Candidate, GjcPreset, GjcPreview, Launch, ModelCatalog, ModelProtocol, ModelTest, Overview, Probe, Router, Runtime, SessionLayout, TerminalEvent } from './types';
 
 export const api = {
   overview: () => invoke<Overview>('overview'),
+  pinSession: (id: string, pinned: boolean) => invoke<SessionLayout>('set_session_pin', { id, pinned }),
+  groupSessions: (grouped: boolean) => invoke<SessionLayout>('set_session_grouping', { grouped }),
+  downloadAgent: (agent: 'claude' | 'hermes', directory: string) =>
+    invoke<{path: string; sha256: string; version: string | null}>('download_agent', { agent, directory }),
+  installHermes: (sha256: string) =>
+    invoke<{candidates: Candidate[]; warnings: string[]}>('install_hermes', { sha256 }),
+  savePreset: (preset: GjcPreset) => invoke<GjcPreset>('save_gjc_preset', { preset }),
+  deletePreset: (id: string, revision: number) => invoke<void>('delete_gjc_preset', { id, revision }),
+  previewPreset: (launch: Launch) => invoke<GjcPreview>('preview_gjc_preset', { launch }),
   scan: (agent: Agent, path: string) => invoke<{ candidates: Candidate[]; warnings: string[] }>('scan', { agent, path }),
   inspect: (path: string) => invoke<Candidate>('inspect_executable', { path }),
   register: (request: { agent: Agent; name: string; candidate: Candidate; arguments: string[]; probe_args: string[];

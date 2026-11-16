@@ -1,8 +1,8 @@
 use agent_deck::{
-    adapter, diagnostics,
+    adapter, diagnostics, gjc, install,
     model::{
         error, id, now, Agent, Candidate, Launch, Overview, Preferences, Result, Root, Router,
-        Runtime, Session,
+        Runtime, Session, SessionLayout,
     },
     registry, router,
     storage::{Store, Table},
@@ -11,7 +11,7 @@ use agent_deck::{
 use portable_pty::CommandBuilder;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
@@ -20,6 +20,42 @@ pub struct Deck {
     pub terminal: Arc<Terminal>,
     pub directory: String,
     pub allow_close: AtomicBool,
+    pub configuration: Mutex<()>,
+    pub hermes_download: Mutex<Option<install::HermesReceipt>>,
+}
+
+#[tauri::command]
+pub async fn download_agent(
+    app: AppHandle,
+    agent: Agent,
+    directory: String,
+) -> Result<install::Download> {
+    blocking("installer.download_failed", move || match agent {
+        Agent::Claude => install::claude(&directory),
+        Agent::Hermes => {
+            let deck = app.state::<Deck>();
+            let (download, receipt) = install::hermes(&directory)?;
+            *deck.hermes_download.lock().map_err(error)? = Some(receipt);
+            Ok(download)
+        }
+        _ => Err("No publisher download is configured for this agent".into()),
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn install_hermes(app: AppHandle, sha256: String) -> Result<registry::Scan> {
+    blocking("installer.hermes_failed", move || {
+        let deck = app.state::<Deck>();
+        let receipt = deck
+            .hermes_download
+            .lock()
+            .map_err(error)?
+            .take()
+            .ok_or("Download and review the Hermes installer in this Deck instance first")?;
+        install::install_hermes(&receipt, &sha256)
+    })
+    .await
 }
 
 fn prefs(deck: &Deck) -> Result<Preferences> {
@@ -27,6 +63,41 @@ fn prefs(deck: &Deck) -> Result<Preferences> {
         .store
         .get(Table::Settings, "terminal")?
         .unwrap_or_default())
+}
+
+fn session_layout(deck: &Deck) -> Result<SessionLayout> {
+    Ok(deck
+        .store
+        .get(Table::Settings, "session_layout")?
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn set_session_pin(deck: State<'_, Deck>, id: String, pinned: bool) -> Result<SessionLayout> {
+    let _configuration = deck.configuration.lock().map_err(error)?;
+    required::<Session>(
+        &deck,
+        Table::Sessions,
+        &id,
+        "Save this session before pinning it",
+    )?;
+    let mut layout = session_layout(&deck)?;
+    if pinned {
+        layout.pinned.insert(id);
+    } else {
+        layout.pinned.remove(&id);
+    }
+    deck.store.put(Table::Settings, "session_layout", &layout)?;
+    Ok(layout)
+}
+
+#[tauri::command]
+pub fn set_session_grouping(deck: State<'_, Deck>, grouped: bool) -> Result<SessionLayout> {
+    let _configuration = deck.configuration.lock().map_err(error)?;
+    let mut layout = session_layout(&deck)?;
+    layout.grouped = grouped;
+    deck.store.put(Table::Settings, "session_layout", &layout)?;
+    Ok(layout)
 }
 fn required<T: serde::de::DeserializeOwned>(
     deck: &Deck,
@@ -56,7 +127,9 @@ pub fn overview(deck: State<'_, Deck>) -> Result<Overview> {
         runtimes: deck.store.list(Table::Runtimes)?,
         routers: deck.store.list(Table::Routers)?,
         sessions: deck.store.list(Table::Sessions)?,
+        gjc_presets: deck.store.list(Table::GjcPresets)?,
         preferences: prefs(&deck)?,
+        session_layout: session_layout(&deck)?,
         data_directory: deck.directory.clone(),
         log_file: diagnostics::path(),
     })
@@ -201,11 +274,13 @@ pub async fn register_runtime(app: AppHandle, request: Registration) -> Result<R
 
 #[tauri::command]
 pub fn delete_runtime(deck: State<'_, Deck>, id: String) -> Result<()> {
+    let _configuration = deck.configuration.lock().map_err(error)?;
     deck.store.delete(Table::Runtimes, &id)
 }
 
 #[tauri::command]
 pub fn save_router(deck: State<'_, Deck>, mut profile: Router) -> Result<Router> {
+    let _configuration = deck.configuration.lock().map_err(error)?;
     diagnostics::stage(router::validate(&profile), "router.profile_invalid", None)?;
     let previous = deck.store.get::<Router>(Table::Routers, &profile.id)?;
     if let Some(previous) = previous {
@@ -226,6 +301,7 @@ pub fn save_router(deck: State<'_, Deck>, mut profile: Router) -> Result<Router>
 
 #[tauri::command]
 pub fn delete_router(deck: State<'_, Deck>, id: String) -> Result<()> {
+    let _configuration = deck.configuration.lock().map_err(error)?;
     deck.store.delete(Table::Routers, &id)
 }
 #[tauri::command]
@@ -293,6 +369,156 @@ pub fn import_settings(
 }
 
 #[tauri::command]
+pub async fn save_gjc_preset(app: AppHandle, mut preset: gjc::GjcPreset) -> Result<gjc::GjcPreset> {
+    blocking("gjc.preset_save_failed", move || {
+        let deck = app.state::<Deck>();
+        let _configuration = deck.configuration.lock().map_err(error)?;
+        if preset.id.is_empty() {
+            preset.id = id();
+            preset.created_at = now();
+            preset.revision = 1;
+        } else {
+            let old: gjc::GjcPreset = required(
+                &deck,
+                Table::GjcPresets,
+                &preset.id,
+                "The preset was deleted",
+            )?;
+            if old.revision != preset.revision {
+                return Err("The preset changed. Reopen it before saving.".into());
+            }
+            preset.created_at = old.created_at;
+            preset.revision = old
+                .revision
+                .checked_add(1)
+                .ok_or("Preset revision overflow")?;
+        }
+        preset.updated_at = now();
+        preset.validate()?;
+        let (runtime, profile) = gjc_refs(&deck, &preset)?;
+        gjc::validate_runtime(&preset, &runtime, profile.as_ref())?;
+        registry::verify(&runtime.executable)?;
+        deck.store.put(Table::GjcPresets, &preset.id, &preset)?;
+        Ok(preset)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn delete_gjc_preset(deck: State<'_, Deck>, id: String, revision: u64) -> Result<()> {
+    let _configuration = deck.configuration.lock().map_err(error)?;
+    let preset: gjc::GjcPreset = required(&deck, Table::GjcPresets, &id, "The preset was deleted")?;
+    if preset.revision != revision {
+        return Err("The preset changed. Refresh before deleting.".into());
+    }
+    deck.store.delete(Table::GjcPresets, &id)
+}
+
+fn gjc_refs(deck: &Deck, preset: &gjc::GjcPreset) -> Result<(Runtime, Option<Router>)> {
+    let runtime = required(
+        deck,
+        Table::Runtimes,
+        &preset.runtime_id,
+        "Preset runtime is missing",
+    )?;
+    let profile = preset
+        .router_id
+        .as_deref()
+        .map(|id| required(deck, Table::Routers, id, "Preset router is missing"))
+        .transpose()?;
+    Ok((runtime, profile))
+}
+
+fn resolve_gjc(
+    deck: &Deck,
+    launch: &Launch,
+    selection: &gjc::Selection,
+) -> Result<gjc::ResolvedGjcLaunch> {
+    let preset: gjc::GjcPreset = required(
+        deck,
+        Table::GjcPresets,
+        &selection.preset_id,
+        "The GJC preset was deleted",
+    )?;
+    if uuid::Uuid::parse_str(&preset.id).is_err() {
+        return Err("Invalid preset identity".into());
+    }
+    let (runtime, profile) = gjc_refs(deck, &preset)?;
+    gjc::validate_runtime(&preset, &runtime, profile.as_ref())?;
+    registry::verify(&runtime.executable)?;
+    let cwd = registry::directory(&launch.cwd)?;
+    let mut previous = None;
+    if let Some(id) = &launch.resume_from {
+        let session: Session = required(deck, Table::Sessions, id, "Saved session was deleted")?;
+        if session.runtime_id != runtime.id
+            || session.agent != Agent::Gajae
+            || registry::directory(&session.cwd)? != cwd
+            || session.executable.sha256 != runtime.executable.sha256
+        {
+            return Err(
+                "Resume requires the original approved GJC runtime and working directory".into(),
+            );
+        }
+        if deck.terminal.history_active(id)? {
+            return Err("Close the original terminal before resuming its conversation".into());
+        }
+        if session
+            .gjc
+            .as_ref()
+            .map(|history| history.preset_id.as_str())
+            != Some(preset.id.as_str())
+        {
+            return Err(
+                "Resume requires the original preset. Use manual Resume for earlier sessions."
+                    .into(),
+            );
+        }
+        previous = session.gjc;
+    }
+    let app_data = registry::directory(&deck.directory)?;
+    let inputs = gjc::filesystem_inputs(
+        &app_data,
+        &cwd,
+        &preset,
+        &runtime,
+        launch,
+        selection,
+        previous.as_ref(),
+    )?;
+    let plan = gjc::resolve(
+        &preset,
+        &runtime,
+        profile.as_ref(),
+        launch,
+        selection,
+        inputs,
+    )?;
+    gjc::validate_targets(&plan)?;
+    Ok(plan)
+}
+
+#[derive(serde::Serialize)]
+pub struct GjcPreview {
+    fingerprint: String,
+    plan: gjc::ResolvedGjcLaunch,
+}
+
+#[tauri::command]
+pub async fn preview_gjc_preset(app: AppHandle, launch: Launch) -> Result<GjcPreview> {
+    blocking("gjc.preview_failed", move || {
+        let deck = app.state::<Deck>();
+        let _configuration = deck.configuration.lock().map_err(error)?;
+        let selection = launch.gjc.as_ref().ok_or("Select a GJC preset")?;
+        let plan = resolve_gjc(&deck, &launch, selection)?;
+        Ok(GjcPreview {
+            fingerprint: plan.fingerprint()?,
+            plan,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn start_session(
     app: AppHandle,
     window: WebviewWindow,
@@ -310,6 +536,30 @@ pub async fn start_session(
             .is_some()
         {
             return Err("Session ID is already in use".into());
+        }
+        let _configuration = deck.configuration.lock().map_err(error)?;
+        if let Some(selection) = &launch.gjc {
+            let plan = resolve_gjc(&deck, &launch, selection)?;
+            if plan.fingerprint()? != selection.preview_fingerprint {
+                diagnostics::warn("gjc.preview_stale", Some(&launch.id));
+                return Err("The launch configuration changed. Review a new preview before starting.".into());
+            }
+            let credential = plan.credential(&launch.token)?;
+            let prepared = diagnostics::stage(gjc::prepare(&plan), "gjc.prepare_failed", Some(&launch.id))?;
+            let mut command = CommandBuilder::new(&plan.executable);
+            for argument in &plan.argv { command.arg(argument); }
+            for (key, value) in &plan.env { command.env(key, value); }
+            if let Some((key, value)) = credential { command.env(key, value); }
+            command.cwd(&plan.cwd);
+            let runtime: Runtime = required(&deck, Table::Runtimes, &plan.runtime_id, "Preset runtime is missing")?;
+            let executable = registry::verify(&runtime.executable)?;
+            let snapshot = Session {
+                id: launch.id, name: launch.name.trim().into(), runtime_id: plan.runtime_id,
+                agent: Agent::Gajae, version: plan.version, executable, cwd: plan.cwd,
+                router_id: plan.router_id, endpoint: plan.endpoint, router_revision: plan.router_revision,
+                model: plan.model, created_at: now(), resume_source_id: launch.resume_from, gjc: Some(plan.history),
+            };
+            return record_launch(&deck, window, snapshot, command, (launch.cols, launch.rows), prepared);
         }
         let runtime: Runtime = diagnostics::stage(
             required(
@@ -336,13 +586,16 @@ pub async fn start_session(
         )?;
         if let Some(previous_id) = &launch.resume_from {
             let previous: Session = required(&deck, Table::Sessions, previous_id, "Saved session was deleted")?;
+            if previous.gjc.is_some() {
+                return Err("Select the original GJC preset to resume this session".into());
+            }
             if previous.agent != Agent::Gajae || runtime.agent != Agent::Gajae || previous.runtime_id != runtime.id {
                 return Err("Resume requires the original Gajae-Code runtime".into());
             }
             if registry::directory(&previous.cwd)? != cwd {
                 return Err("Resume requires the original working directory".into());
             }
-            if matches!(deck.terminal.status(previous_id)?, "running" | "stopping") {
+            if deck.terminal.history_active(previous_id)? {
                 return Err("Close the original terminal before resuming its conversation".into());
             }
         }
@@ -395,28 +648,49 @@ pub async fn start_session(
             model: binding.model,
             created_at: now(),
             resume_source_id: launch.resume_from,
+            gjc: None,
         };
-        deck.terminal.start(
-            snapshot.id.clone(),
-            command,
-            (launch.cols, launch.rows),
-            move |event| {
-                let _ = window.emit("terminal-ready", event);
-            },
-        )?;
-        if let Err(e) = deck.store.put(Table::Sessions, &snapshot.id, &snapshot) {
-            diagnostics::warn("session.snapshot_save_failed", Some(&snapshot.id));
-            let _ = deck.terminal.close(&snapshot.id);
-            return Err(e);
-        }
-        if let Ok(mut preferences) = prefs(&deck) {
-            preferences.last_runtime = snapshot.runtime_id.clone();
-            preferences.last_cwd = snapshot.cwd.clone();
-            let _ = deck.store.put(Table::Settings, "terminal", &preferences);
-        }
-        Ok(snapshot)
+        record_launch(&deck, window, snapshot, command, (launch.cols, launch.rows), gjc::Prepared::default())
     })
     .await
+}
+
+fn record_launch(
+    deck: &Deck,
+    window: WebviewWindow,
+    snapshot: Session,
+    command: CommandBuilder,
+    size: (u16, u16),
+    prepared: gjc::Prepared,
+) -> Result<Session> {
+    deck.terminal.start_with_lease(
+        snapshot.id.clone(),
+        snapshot.resume_source_id.as_deref(),
+        command,
+        size,
+        move |event| {
+            let _ = window.emit("terminal-ready", event);
+        },
+        prepared.lease,
+    )?;
+    drop(prepared.writer);
+    // A resume gets a fresh process snapshot while its saved history row keeps its identity.
+    if let Err(e) = snapshot
+        .resume_source_id
+        .is_none()
+        .then(|| deck.store.put(Table::Sessions, &snapshot.id, &snapshot))
+        .transpose()
+    {
+        diagnostics::warn("session.snapshot_save_failed", Some(&snapshot.id));
+        let _ = deck.terminal.close(&snapshot.id);
+        return Err(e);
+    }
+    if let Ok(mut preferences) = prefs(deck) {
+        preferences.last_runtime = snapshot.runtime_id.clone();
+        preferences.last_cwd = snapshot.cwd.clone();
+        let _ = deck.store.put(Table::Settings, "terminal", &preferences);
+    }
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -452,8 +726,13 @@ pub async fn close_terminal(app: AppHandle, id: String) -> Result<()> {
 }
 #[tauri::command]
 pub fn delete_session(deck: State<'_, Deck>, id: String) -> Result<()> {
-    if matches!(deck.terminal.status(&id)?, "running" | "stopping") {
+    let _configuration = deck.configuration.lock().map_err(error)?;
+    if deck.terminal.history_active(&id)? {
         return Err("Close the running terminal first".into());
+    }
+    let mut layout = session_layout(&deck)?;
+    if layout.pinned.remove(&id) {
+        deck.store.put(Table::Settings, "session_layout", &layout)?;
     }
     deck.store.delete(Table::Sessions, &id)
 }
@@ -471,7 +750,16 @@ pub async fn resolve_session(app: AppHandle, id: String) -> Result<()> {
         )?;
         registry::directory(&session.cwd)?;
         registry::verify(&runtime.executable)?;
-        if let Some(id) = session.router_id {
+        if let Some(history) = session.gjc {
+            let preset: gjc::GjcPreset = required(
+                &deck,
+                Table::GjcPresets,
+                &history.preset_id,
+                "Saved GJC preset was deleted",
+            )?;
+            let (runtime, profile) = gjc_refs(&deck, &preset)?;
+            gjc::validate_runtime(&preset, &runtime, profile.as_ref())?;
+        } else if let Some(id) = session.router_id {
             let router: Router = required(&deck, Table::Routers, &id, "Saved router was deleted")?;
             if !router.enabled {
                 return Err("Saved router is disabled".into());

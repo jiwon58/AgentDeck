@@ -6,7 +6,7 @@ The audit examined the tagged host-status emitter and, where present, verified i
 
 | Source versions | Result |
 | --- | --- |
-| v0.1.0 through v0.12.11 | No audited host-status emitter. Deck displays terminal process status. |
+| v0.1.0 through v0.12.11 | No native emitter in the audit. For v0.10.2, Deck recognizes the activity, built-in question, and composer indicators in the live TUI frame. Other versions in this band display terminal process status. |
 | v0.12.12 through v0.18.12, including the nightlies listed below | Native host markers emitted without the opt-in setting. |
 | v0.19.0 through v0.20.0, including the listed v0.20.1 nightlies | Native host markers are opt-in. Deck sets the environment variable for GJC child processes. |
 

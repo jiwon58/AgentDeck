@@ -6,7 +6,7 @@ Versions are recorded in Cargo.lock and package-lock.json. Cargo and npm install
 | --- | --- | --- |
 | Tauri and dialog plugin | Desktop runtime, folder selection and native confirmations | MIT / Apache-2.0 |
 | React and React DOM | UI and rendering | MIT |
-| xterm.js and Fit addon | ANSI and terminal layout | MIT |
+| xterm.js, Fit and Search addons | ANSI, terminal layout and in-memory terminal output search | MIT |
 | Vite, TypeScript, React type declarations | Build and type checking | MIT / Apache-2.0 |
 | portable-pty | Cross-platform API for ConPTY and Unix PTY | MIT |
 | rusqlite | Local SQLite, with bundled SQLite | MIT / public domain SQLite |

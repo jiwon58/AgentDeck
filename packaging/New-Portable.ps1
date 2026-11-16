@@ -23,8 +23,10 @@ try {
         if (Test-Path -LiteralPath $staleLoader -PathType Leaf) { Remove-Item -LiteralPath $staleLoader }
     }
     Copy-Item -LiteralPath docs/enterprise-deployment.md -Destination (Join-Path $stage.FullName "DEPLOYMENT.md") -Force
+    Copy-Item -LiteralPath docs/user-guide.md -Destination (Join-Path $stage.FullName "USER-GUIDE.md") -Force
     Copy-Item -LiteralPath docs/compatibility.md -Destination (Join-Path $stage.FullName "COMPATIBILITY.md") -Force
     Copy-Item -LiteralPath docs/gjc-session-status.md -Destination (Join-Path $stage.FullName "gjc-session-status.md") -Force
+    Copy-Item -LiteralPath docs/gjc-presets.md -Destination (Join-Path $stage.FullName "GJC-PRESETS.md") -Force
     Copy-Item -LiteralPath docs/dependencies.md -Destination (Join-Path $stage.FullName "DEPENDENCIES.md") -Force
     Set-Content -LiteralPath (Join-Path $stage.FullName "VERSION.txt") -Value "Agent Deck $version (Windows x64)" -Encoding ascii
     $contents = Get-ChildItem -LiteralPath $stage.FullName -File | Where-Object Name -ne 'SHA256SUMS.txt'

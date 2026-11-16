@@ -20,18 +20,49 @@ export interface Session {
   executable: Candidate; cwd: string; router_id: string | null; endpoint: string | null;
   router_revision: number | null; model: string; created_at: number;
   resume_source_id: string | null;
+  gjc?: GjcHistory | null;
 }
 export interface Preferences { font_size: number; scrollback: number; last_runtime: string; last_cwd: string }
+export interface SessionLayout { grouped: boolean; pinned: string[] }
 export interface Overview {
   app_version: string;
   roots: { id: string; agent: Agent; path: string }[];
   runtimes: Runtime[]; routers: Router[]; sessions: Session[]; preferences: Preferences; data_directory: string; log_file: string | null;
+  gjc_presets: GjcPreset[];
+  session_layout: SessionLayout;
 }
 export interface Launch {
   id: string; name: string; runtime_id: string; cwd: string; router_id: string | null; model: string;
   extra: string[]; env: Record<string, string>; token: string; manual_router: boolean;
-  manual_protocol: 'openai' | 'anthropic'; cols: number; rows: number;
+  manual_protocol?: 'openai' | 'anthropic'; cols: number; rows: number;
   resume_from?: string;
+  gjc?: { preset_id: string; preview_fingerprint: string; model?: string; stream_timeout?: string;
+    history_mode?: GjcHistoryMode; history_path?: string };
+}
+export type GjcHistoryMode = 'default' | 'existing_workspace' | 'custom';
+export interface GjcHistory {
+  preset_id: string; preset_revision: number; agent_directory: string | null; session_directory: string | null;
+  history_mode: GjcHistoryMode; models_fingerprint: string | null;
+  history_disabled: boolean;
+}
+interface GjcToggle { enabled: boolean; value: string }
+export interface GjcPreset {
+  id: string; name: string; description: string; enabled: boolean; auto_config_enabled: boolean;
+  revision: number; created_at: number; updated_at: number; runtime_id: string; router_id: string | null;
+  protocol: ModelProtocol; provider_id: string; model: string; context_tokens: number; max_output_tokens: number;
+  directory_mode: 'default' | 'managed' | 'custom'; agent_path: string; history_mode: GjcHistoryMode; history_path: string;
+  stream_timeout: GjcToggle; ui_language: GjcToggle; model_preset_registry: GjcToggle;
+  variables: (GjcToggle & { key: string })[];
+}
+export interface GjcPreview {
+  fingerprint: string;
+  plan: {
+    history: GjcHistory; runtime_id: string; executable: string; executable_sha256: string; version: string;
+    cwd: string; endpoint: string | null; provider_id: string; model: string; argv: string[];
+    env: Record<string, string>; models_target: string | null; warnings: string[]; requires_token: boolean;
+    protocol: ModelProtocol;
+    managed_startup_config: boolean;
+  };
 }
 export type TerminalEvent = { session_id: string; sequence_number: number } & (
   { event_type: 'terminal_output'; payload: number[] } |

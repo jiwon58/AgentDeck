@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { api, browse, environment, lines, readable } from './api';
 import { RouterModels } from './RouterModels';
+import { GjcPresetSettings } from './GjcPresets';
+import { AgentInstallSettings, type InstallReview } from './AgentInstallSettings';
 import { agents, agentKeys, type Agent, type Candidate, type Overview, type Probe, type Router } from './types';
 
 type Refresh = () => Promise<void>;
@@ -10,6 +12,7 @@ export function Settings({ data, refresh }: { data: Overview; refresh: Refresh }
   const [section, setSection] = useState('Agent Runtimes');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [review, setReview] = useState<InstallReview>();
   const task: Task = async work => {
     setBusy(true);
     setMessage('');
@@ -18,12 +21,16 @@ export function Settings({ data, refresh }: { data: Overview; refresh: Refresh }
   };
   return <>
     <nav className="settings-nav" aria-label="Settings sections">
-      {['Agent Runtimes', 'Local LLM Router', 'Terminal Preferences', 'Application & Offline Settings'].map(name =>
-        <button key={name} className={section === name ? 'selected' : ''} onClick={() => { setSection(name); setMessage(''); }}>{name}</button>)}
+      {['Agent Runtimes', 'Install Agents', 'GJC Presets', 'Local LLM Router', 'Terminal Preferences', 'Application & Offline Settings'].map(name =>
+        <button key={name} disabled={busy} className={section === name ? 'selected' : ''} onClick={() => { setReview(undefined); setSection(name); setMessage(''); }}>{name}</button>)}
     </nav>
     {message && <p className="notice danger" role="alert">{message}</p>}
     <fieldset className="settings-body" disabled={busy}>
-      {section === 'Agent Runtimes' && <RuntimeSettings data={data} refresh={refresh} task={task} />}
+      {section === 'Agent Runtimes' && <RuntimeSettings data={data} refresh={refresh} task={task} review={review} />}
+      {section === 'Install Agents' && <AgentInstallSettings task={task} onReview={value => {
+        setReview(value); setSection('Agent Runtimes');
+      }} />}
+      {section === 'GJC Presets' && <GjcPresetSettings data={data} refresh={refresh} />}
       {section === 'Local LLM Router' && <RouterSettings data={data} refresh={refresh} task={task} />}
       {section === 'Terminal Preferences' && <TerminalSettings data={data} refresh={refresh} task={task} />}
       {section === 'Application & Offline Settings' && <OfflineSettings data={data} refresh={refresh} task={task} />}
@@ -32,15 +39,15 @@ export function Settings({ data, refresh }: { data: Overview; refresh: Refresh }
   </>;
 }
 
-function RuntimeSettings({ data, refresh, task }: { data: Overview; refresh: Refresh; task: Task }) {
-  const [agent, setAgent] = useState<Agent>('gajae');
-  const [root, setRoot] = useState('');
-  const [path, setPath] = useState('');
+function RuntimeSettings({ data, refresh, task, review }: { data: Overview; refresh: Refresh; task: Task; review?: InstallReview }) {
+  const [agent, setAgent] = useState<Agent>(review?.agent ?? 'gajae');
+  const [root, setRoot] = useState(review?.directory ?? '');
+  const [path, setPath] = useState(review?.candidate.path ?? '');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [scanned, setScanned] = useState(false);
-  const [candidate, setCandidate] = useState<Candidate>();
-  const [name, setName] = useState('');
+  const [candidate, setCandidate] = useState<Candidate | undefined>(review?.candidate);
+  const [name, setName] = useState(review ? agents[review.agent] : '');
   const [args, setArgs] = useState('');
   const [probeArgs, setProbeArgs] = useState('');
   const [override, setOverride] = useState('');

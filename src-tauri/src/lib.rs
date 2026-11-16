@@ -1,5 +1,7 @@
 pub mod adapter;
 pub mod diagnostics;
+pub mod gjc;
+pub mod install;
 pub mod model;
 mod process;
 pub mod registry;

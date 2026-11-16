@@ -53,7 +53,17 @@ aside p { padding: 8px; }
 }
 .session-item strong { overflow-wrap: anywhere; }
 .session-item span { font-size: 12px; color: #afc2da; }
-.session-row { border: 1px solid transparent; border-radius: 6px; margin-bottom: 5px; }
+.session-row { border: 1px solid transparent; border-radius: 6px; margin-bottom: 5px; position: relative; }
+.session-row:has(.session-pin) .session-item { padding-right: 33px; }
+.session-pin { position: absolute; right: 5px; top: 5px; padding: 3px 5px; background: transparent; border-color: transparent; }
+.session-pin[aria-pressed="true"] { color: #ffbf65; }
+.session-grouping { padding: 4px 7px 10px; font-size: 12px; color: var(--muted); }
+.session-group-name { margin: 8px 7px 4px; font-size: 11px; color: var(--muted); }
+.switch-results { display: grid; gap: 5px; max-height: 52vh; overflow-y: auto; }
+.switch-item { min-width: 0; display: grid; gap: 2px; text-align: left; }
+.switch-item.selected { border-color: var(--accent); background: #24364b; }
+.attention-action { color: #ffbf65; border-color: #70582d; }
+.reply-badge { color: #ffbf65; margin-left: 8px; }
 .session-row.selected { background: #202e41; border-color: #334b64; }
 .session-row .session-item { margin-bottom: 0; }
 .session-status { color: #e1eaf7; }
@@ -71,9 +81,36 @@ main { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .tab.selected { background: #10141d; border-top-color: var(--accent); color: #f0f6ff; }
 .tabs button { border: 0; border-radius: 0; background: transparent; white-space: nowrap; }
 .tabs .tab-close { padding-inline: 8px; color: var(--muted); }
+.tabs .compare-action { margin-left: auto; flex: none; }
 .terminal-area { flex: 1; min-height: 0; position: relative; }
-.terminal-pane { position: absolute; inset: 0; padding: 10px 12px; overflow: hidden; }
+.terminal-pane { position: absolute; inset: 0; padding: 6px 12px 10px; overflow: hidden; display: flex; flex-direction: column; gap: 5px; }
 .terminal-pane[hidden] { display: none; }
+.terminal-pane.pane-left { right: 50%; border-right: 1px solid var(--line); }
+.terminal-pane.pane-right { left: 50%; }
+.terminal-pane.pane-focused { box-shadow: inset 0 2px var(--accent); }
+.terminal-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 14px; grid-template-rows: minmax(0, 1fr); }
+.terminal-tools { flex: none; position: relative; z-index: 1; }
+.terminal-tool-row, .terminal-find { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.terminal-tool-row button, .terminal-find button { padding: 2px 7px; font-size: 12px; }
+.terminal-tools button[aria-pressed="true"] { color: #ffbf65; border-color: #70582d; }
+.terminal-tool-row strong { font-size: 12px; }
+.terminal-find { padding-top: 5px; }
+.terminal-find input { flex: 1; min-width: 85px; padding: 3px 6px; }
+.terminal-find output { font-size: 12px; color: var(--muted); }
+.terminal-bookmarks summary { padding: 2px 5px; font-size: 12px; }
+.bookmark-list { position: absolute; z-index: 2; margin-top: 4px; max-height: 40vh; overflow-y: auto;
+  display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+.terminal-host { width: 100%; height: 100%; min-height: 0; }
+.terminal-pane .xterm-viewport { scrollbar-width: none; }
+.terminal-scrollbar {
+  appearance: none; writing-mode: vertical-lr; direction: ltr; margin: 0;
+  width: 14px; height: 100%; background: #171e2a; border-radius: 5px; cursor: pointer; touch-action: none;
+}
+.terminal-scrollbar:disabled { visibility: hidden; }
+.terminal-scrollbar::-webkit-slider-thumb {
+  appearance: none; width: 14px; height: 18px; background: #71839e;
+  border: 2px solid #171e2a; border-radius: 5px;
+}
 .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; padding: 20px; }
 .empty-icon { width: 53px; height: 53px; font-size: 29px; margin-bottom: 6px; }
 .empty .row, .empty > button { margin-top: 6px; }
@@ -126,3 +163,7 @@ details[open] > :not(summary) { margin-top: 8px; }
 .sessions-collapsed aside { padding: 12px 0; }
 .sessions-collapsed .aside-title { justify-content: center; padding-inline: 0; }
 
+
+.preset-preview { display: grid; grid-template-columns: minmax(7rem, auto) minmax(0, 1fr); gap: .5rem 1rem; }
+.preset-preview dt { color: var(--muted); }
+.preset-preview dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }

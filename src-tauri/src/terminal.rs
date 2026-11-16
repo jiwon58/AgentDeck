@@ -34,6 +34,7 @@ struct Output {
 }
 
 struct Live {
+    history_id: String,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     input: mpsc::SyncSender<Vec<u8>>,
     stop: AtomicBool,
@@ -104,12 +105,30 @@ impl Terminal {
         dimensions: (u16, u16),
         notify: impl Fn(&Event) + Send + Sync + 'static,
     ) -> Result<()> {
+        self.start_with_lease(id, None, command, dimensions, notify, None)
+    }
+
+    pub fn start_with_lease(
+        &self,
+        id: String,
+        resume_from: Option<&str>,
+        command: CommandBuilder,
+        dimensions: (u16, u16),
+        notify: impl Fn(&Event) + Send + Sync + 'static,
+        lease: Option<std::fs::File>,
+    ) -> Result<()> {
         let mut sessions = self.sessions.lock().map_err(error)?;
         if self.closing.load(Ordering::Acquire) {
             return Err("Application is closing".into());
         }
         if sessions.contains_key(&id) {
             return Err("Session ID is already in use".into());
+        }
+        let history_id = resume_from.unwrap_or(&id);
+        if sessions.values().any(|session| {
+            session.history_id == history_id && !session.done.load(Ordering::Acquire)
+        }) {
+            return Err("This saved session already has a running terminal".into());
         }
         if sessions.len() >= SESSION_LIMIT {
             return Err("Close a tab before launching more than 24 sessions".into());
@@ -145,6 +164,7 @@ impl Terminal {
         }
         let (input, receive) = mpsc::sync_channel(32);
         let live = Arc::new(Live {
+            history_id: history_id.to_owned(),
             master: Mutex::new(Some(pair.master)),
             input,
             stop: AtomicBool::new(false),
@@ -238,6 +258,7 @@ impl Terminal {
                 thread::sleep(Duration::from_millis(30));
             };
             drop(job);
+            drop(lease);
             live.done.store(true, Ordering::Release);
             let master = live.master.lock().ok().and_then(|mut master| master.take());
             drop(master);
@@ -327,6 +348,15 @@ impl Terminal {
         };
         let status = *live.state.lock().map_err(error)?;
         Ok(status)
+    }
+
+    pub fn history_active(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .sessions
+            .lock()
+            .map_err(error)?
+            .values()
+            .any(|session| session.history_id == id && !session.done.load(Ordering::Acquire)))
     }
 
     pub fn close(&self, id: &str) -> Result<()> {

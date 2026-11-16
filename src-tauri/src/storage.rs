@@ -16,6 +16,7 @@ pub enum Table {
     Routers,
     Sessions,
     Settings,
+    GjcPresets,
 }
 
 impl Table {
@@ -26,6 +27,7 @@ impl Table {
             Self::Routers => "router_profiles",
             Self::Sessions => "session_definitions",
             Self::Settings => "application_settings",
+            Self::GjcPresets => "gjc_presets",
         }
     }
 }
@@ -49,16 +51,20 @@ impl Store {
         let version: u32 = db
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(sqlite_error)?;
-        match version {
-            0 => {
-                let transaction = db.transaction().map_err(sqlite_error)?;
+        if version > 2 {
+            return Err("The database belongs to a newer Agent Deck version".into());
+        }
+        if version < 2 {
+            let transaction = db.transaction().map_err(sqlite_error)?;
+            if version == 0 {
                 transaction
                     .execute_batch(include_str!("../migrations/001_initial.sql"))
                     .map_err(sqlite_error)?;
-                transaction.commit().map_err(sqlite_error)?;
             }
-            1 => {}
-            _ => return Err("The database belongs to a newer Agent Deck version".into()),
+            transaction
+                .execute_batch(include_str!("../migrations/002_gjc_presets.sql"))
+                .map_err(sqlite_error)?;
+            transaction.commit().map_err(sqlite_error)?;
         }
         Ok(Self(Mutex::new(db)))
     }

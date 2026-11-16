@@ -2,6 +2,8 @@
 
 Agent Deck is a Windows x64 desktop terminal manager for Gajae-Code, Claude Code, Hermes Agent and custom CLI installations. It uses a local React interface, Rust and Tauri 2, xterm.js, Windows ConPTY via portable-pty, and bundled SQLite.
 
+Use [GJC presets](docs/gjc-presets.md) to reuse a model and router configuration and reopen saved conversations from the original workspace.
+
 ## Development
 
 Install Windows MSVC C++ Build Tools with the Windows SDK, a current stable Rust toolchain, Node.js 22.12 or newer, and Microsoft Edge WebView2 Runtime. Run from this directory.
