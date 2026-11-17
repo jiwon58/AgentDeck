@@ -8,6 +8,8 @@ Portable Agent Deck uses the installed Microsoft Edge WebView2 Runtime. Verify E
 
 Application data is in the Tauri per-user application data directory, normally `%APPDATA%\local.agentdeck.desktop`. Settings shows the resolved location. The portable ZIP contains no personal settings. Deleting the extracted folder or uninstalling leaves the per-user database. Exit Agent Deck before backing up or manually removing its data directory. Agent-owned settings and conversations are stored by each Agent.
 
+For GJC Team, transfer the Team-enabled portable ZIP and keep the full `team` folder beside the application. Approve the packaged psmux and Deck helper under endpoint policy and make Git for Windows and PowerShell available. psmux uses an isolated temporary registry and authenticated loopback connections to manage panes. Deck verifies the packaged psmux digest at Team launch. Re-signing psmux changes its digest and requires a corresponding reviewed build. The NSIS configuration currently packages the base application. [psmux v3.4.0 release](https://github.com/psmux/psmux/releases/tag/v3.4.0)
+
 ## Local diagnostic logs
 
 After reproducing an issue, collect `agent-deck.log` and, when present, `agent-deck.log.1`. Open **Settings → Application & Offline Settings** to copy the resolved path. On Windows the default is `%LOCALAPPDATA%\local.agentdeck.desktop\logs\agent-deck.log`. If the normal log directory is unavailable or startup fails before resolving it, check `%TEMP%\AgentDeck\logs\agent-deck.log`. For failures before the executable starts, such as a missing loader DLL, check the Windows Application event log.

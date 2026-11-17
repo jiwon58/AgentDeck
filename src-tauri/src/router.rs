@@ -6,7 +6,7 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     io::Read,
     net::{IpAddr, TcpStream, ToSocketAddrs},
     time::{Duration, Instant},
@@ -153,9 +153,16 @@ fn http_failure(status: u16) -> &'static str {
 #[derive(Serialize)]
 pub struct ModelCatalog {
     pub models: Vec<String>,
+    pub limits: BTreeMap<String, ModelLimits>,
     pub complete: bool,
     pub http: Option<u16>,
     pub message: &'static str,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct ModelLimits {
+    pub context: Option<u32>,
+    pub output: Option<u32>,
 }
 
 pub fn list_models(profile: &Router, token: &str, protocol: ModelProtocol) -> Result<ModelCatalog> {
@@ -166,6 +173,7 @@ pub fn list_models(profile: &Router, token: &str, protocol: ModelProtocol) -> Re
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut catalog = ModelCatalog {
         models: vec![],
+        limits: BTreeMap::new(),
         complete: false,
         http: None,
         message: "Model catalog limit reached",
@@ -212,16 +220,33 @@ pub fn list_models(profile: &Router, token: &str, protocol: ModelProtocol) -> Re
             catalog.message = "Router did not return a model list";
             break;
         };
-        for id in models
-            .iter()
-            .filter_map(|model| model["id"].as_str())
-            .filter(|id| valid_model_id(id))
-        {
+        for model in models {
+            let Some(id) = model["id"].as_str().filter(|id| valid_model_id(id)) else {
+                continue;
+            };
             if ids.len() == MAX_MODELS && !ids.contains(id) {
                 catalog.models = ids.into_iter().collect();
                 return Ok(catalog);
             }
-            ids.insert(id.to_owned());
+            let token_limit = |field: &str| {
+                model[field]
+                    .as_u64()
+                    .and_then(|value| u32::try_from(value).ok())
+                    .filter(|&value| value > 0)
+            };
+            let limits = match protocol {
+                ModelProtocol::Openai => ModelLimits {
+                    context: token_limit("max_model_len"),
+                    output: None,
+                },
+                ModelProtocol::Anthropic => ModelLimits {
+                    context: token_limit("max_input_tokens"),
+                    output: token_limit("max_tokens"),
+                },
+            };
+            if ids.insert(id.to_owned()) {
+                catalog.limits.insert(id.to_owned(), limits);
+            }
         }
         if body["has_more"] != true {
             catalog.complete = true;

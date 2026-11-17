@@ -171,9 +171,10 @@ fn collect(terminal: &Terminal, id: &str, bytes: &mut Vec<u8>, until: impl Fn(&[
     while Instant::now() < deadline {
         for event in terminal.drain(id).expect("drain terminal") {
             if event.event_type == "terminal_output" {
-                bytes.extend(
-                    serde_json::from_value::<Vec<u8>>(event.payload).expect("terminal bytes"),
-                );
+                bytes.extend(match event.payload {
+                    agent_deck::terminal::Payload::Bytes(bytes) => bytes,
+                    _ => panic!("expected terminal bytes"),
+                });
             }
         }
         #[cfg(windows)]
@@ -241,7 +242,9 @@ fn three_ptys_accept_input_resize_and_exit_independently() {
             .into_iter()
             .find(|event| event.event_type == "terminal_exited")
         {
-            assert_eq!(event.payload["code"], 7);
+            assert!(
+                matches!(event.payload, agent_deck::terminal::Payload::Json(value) if value["code"] == 7)
+            );
             break;
         }
         assert!(Instant::now() < deadline, "terminal did not exit");

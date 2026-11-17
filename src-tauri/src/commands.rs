@@ -1,12 +1,13 @@
 use agent_deck::{
-    adapter, diagnostics, gjc, install,
+    adapter, diagnostics, gjc, gjc_history, install,
     model::{
         error, id, now, Agent, Candidate, Launch, Overview, Preferences, Result, Root, Router,
         Runtime, Session, SessionLayout,
     },
-    registry, router,
+    native_gjc, registry, router,
     storage::{Store, Table},
-    terminal::{Event, Terminal},
+    team,
+    terminal::{Event, SessionResources, Terminal},
 };
 use portable_pty::CommandBuilder;
 use std::sync::{
@@ -123,6 +124,7 @@ async fn blocking<T: Send + 'static>(
 pub fn overview(deck: State<'_, Deck>) -> Result<Overview> {
     Ok(Overview {
         app_version: env!("CARGO_PKG_VERSION"),
+        team_available: team::available(),
         roots: deck.store.list(Table::Roots)?,
         runtimes: deck.store.list(Table::Runtimes)?,
         routers: deck.store.list(Table::Routers)?,
@@ -501,6 +503,15 @@ fn resolve_gjc(
 pub struct GjcPreview {
     fingerprint: String,
     plan: gjc::ResolvedGjcLaunch,
+    team: Option<team::Plan>,
+}
+
+fn plan_fingerprint(plan: &gjc::ResolvedGjcLaunch, team: Option<&team::Plan>) -> Result<String> {
+    let fingerprint = plan.fingerprint()?;
+    Ok(match team {
+        Some(team) => format!("{fingerprint}:native-team:{}", team.sha256),
+        None => fingerprint,
+    })
 }
 
 #[tauri::command]
@@ -510,10 +521,80 @@ pub async fn preview_gjc_preset(app: AppHandle, launch: Launch) -> Result<GjcPre
         let _configuration = deck.configuration.lock().map_err(error)?;
         let selection = launch.gjc.as_ref().ok_or("Select a GJC preset")?;
         let plan = resolve_gjc(&deck, &launch, selection)?;
+        let team = launch
+            .team
+            .then(|| {
+                let runtime = required(
+                    &deck,
+                    Table::Runtimes,
+                    &plan.runtime_id,
+                    "Preset runtime is missing",
+                )?;
+                team::Plan::verify(&runtime)
+            })
+            .transpose()?;
         Ok(GjcPreview {
-            fingerprint: plan.fingerprint()?,
+            fingerprint: plan_fingerprint(&plan, team.as_ref())?,
             plan,
+            team,
         })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_gjc_history(agent_directory: Option<String>) -> Result<gjc_history::Catalog> {
+    blocking("gjc.history_scan_failed", move || {
+        gjc_history::list(gjc_history::agent_directory(agent_directory.as_deref())?)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn yaml_presets(
+    deck: State<'_, Deck>,
+) -> Result<std::collections::BTreeMap<String, native_gjc::Preset>> {
+    Ok(deck
+        .store
+        .get(Table::Settings, native_gjc::PRESETS)?
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn save_yaml_preset(deck: State<'_, Deck>, mut preset: native_gjc::Preset) -> Result<()> {
+    let _configuration = deck.configuration.lock().map_err(error)?;
+    preset.name = preset.name.trim().into();
+    if preset.name.is_empty() || preset.name.len() > 120 {
+        return Err("Enter a preset name up to 120 bytes".into());
+    }
+    let mut saved = yaml_presets(deck.clone())?;
+    saved.insert(preset.name.clone(), preset);
+    deck.store.put(Table::Settings, native_gjc::PRESETS, &saved)
+}
+
+#[tauri::command]
+pub async fn list_managed_gjc_history(app: AppHandle, id: String) -> Result<gjc_history::Catalog> {
+    blocking("gjc.history_scan_failed", move || {
+        let deck = app.state::<Deck>();
+        let session: Session = required(&deck, Table::Sessions, &id, "Saved session was deleted")?;
+        let paths = session
+            .native_gjc
+            .ok_or("The session has no generated YAML history")?;
+        gjc_history::list_in(paths.session_directory, paths.agent_directory)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn inspect_gjc_history(
+    path: String,
+    agent_directory: Option<String>,
+) -> Result<gjc_history::Entry> {
+    blocking("gjc.history_inspect_failed", move || {
+        gjc_history::inspect(
+            std::path::Path::new(&path),
+            gjc_history::agent_directory(agent_directory.as_deref())?,
+        )
     })
     .await
 }
@@ -522,7 +603,7 @@ pub async fn preview_gjc_preset(app: AppHandle, launch: Launch) -> Result<GjcPre
 pub async fn start_session(
     app: AppHandle,
     window: WebviewWindow,
-    launch: Launch,
+    mut launch: Launch,
 ) -> Result<Session> {
     blocking("session.launch_failed", move || {
         let deck = app.state::<Deck>();
@@ -538,28 +619,49 @@ pub async fn start_session(
             return Err("Session ID is already in use".into());
         }
         let _configuration = deck.configuration.lock().map_err(error)?;
+        if let Some(selection) = launch.yaml.take() {
+            if launch.resume_from.is_some() || launch.gjc.is_some() || launch.external_history.is_some() || launch.team {
+                return Err("Use an independent new session to generate GJC YAML".into());
+            }
+            return start_yaml_session(&deck, window, launch, selection);
+        }
+        if launch.external_history.is_some() {
+            return open_external_history(&deck, window, launch);
+        }
+        if let Some(id) = &launch.resume_from {
+            let saved: Session = required(&deck, Table::Sessions, id, "Saved session was deleted")?;
+            if saved.native_gjc.is_some() {
+                return Err("Open the managed conversation by selecting its original history record".into());
+            }
+            if saved.external_history.is_some() {
+                return Err("Use Open GJC history to resume this conversation".into());
+            }
+        }
         if let Some(selection) = &launch.gjc {
             let plan = resolve_gjc(&deck, &launch, selection)?;
-            if plan.fingerprint()? != selection.preview_fingerprint {
+            let runtime: Runtime = required(&deck, Table::Runtimes, &plan.runtime_id, "Preset runtime is missing")?;
+            let executable = registry::verify(&runtime.executable)?;
+            let team = resolve_team(&runtime, &launch)?;
+            if plan_fingerprint(&plan, team.as_ref())? != selection.preview_fingerprint {
                 diagnostics::warn("gjc.preview_stale", Some(&launch.id));
                 return Err("The launch configuration changed. Review a new preview before starting.".into());
             }
             let credential = plan.credential(&launch.token)?;
-            let prepared = diagnostics::stage(gjc::prepare(&plan), "gjc.prepare_failed", Some(&launch.id))?;
             let mut command = CommandBuilder::new(&plan.executable);
             for argument in &plan.argv { command.arg(argument); }
             for (key, value) in &plan.env { command.env(key, value); }
             if let Some((key, value)) = credential { command.env(key, value); }
             command.cwd(&plan.cwd);
-            let runtime: Runtime = required(&deck, Table::Runtimes, &plan.runtime_id, "Preset runtime is missing")?;
-            let executable = registry::verify(&runtime.executable)?;
+            let workspace = prepare_team(&deck, &launch.id, team, &mut command)?;
+            let prepared = diagnostics::stage(gjc::prepare(&plan), "gjc.prepare_failed", Some(&launch.id))?;
             let snapshot = Session {
                 id: launch.id, name: launch.name.trim().into(), runtime_id: plan.runtime_id,
                 agent: Agent::Gajae, version: plan.version, executable, cwd: plan.cwd,
                 router_id: plan.router_id, endpoint: plan.endpoint, router_revision: plan.router_revision,
-                model: plan.model, created_at: now(), resume_source_id: launch.resume_from, gjc: Some(plan.history),
+                model: plan.model, created_at: now(), resume_source_id: launch.resume_from, gjc: Some(plan.history), team: launch.team, external_history: None, native_gjc: None,
             };
-            return record_launch(&deck, window, snapshot, command, (launch.cols, launch.rows), prepared);
+            let resources = SessionResources { team: workspace, models_lease: prepared.lease, ..Default::default() };
+            return record_launch(&deck, window, snapshot, command, (launch.cols, launch.rows), resources, prepared.writer);
         }
         let runtime: Runtime = diagnostics::stage(
             required(
@@ -634,6 +736,8 @@ pub async fn start_session(
             // GJC's host status protocol is opt-in and older releases ignore the variable.
             command.env("GJC_HOST_STATUS", "terax");
         }
+        let team = resolve_team(&runtime, &launch)?;
+        let workspace = prepare_team(&deck, &launch.id, team, &mut command)?;
         let snapshot = Session {
             id: launch.id,
             name: launch.name.trim().into(),
@@ -649,10 +753,266 @@ pub async fn start_session(
             created_at: now(),
             resume_source_id: launch.resume_from,
             gjc: None,
+            team: launch.team,
+            external_history: None,
+            native_gjc: None,
         };
-        record_launch(&deck, window, snapshot, command, (launch.cols, launch.rows), gjc::Prepared::default())
+        let resources = SessionResources { team: workspace, ..Default::default() };
+        record_launch(&deck, window, snapshot, command, (launch.cols, launch.rows), resources, None)
     })
     .await
+}
+
+fn start_yaml_session(
+    deck: &Deck,
+    window: WebviewWindow,
+    launch: Launch,
+    selection: native_gjc::Selection,
+) -> Result<Session> {
+    let preset = selection.preset;
+    let runtime: Runtime = required(
+        deck,
+        Table::Runtimes,
+        &preset.runtime_id,
+        "The selected GJC runtime is unavailable",
+    )?;
+    if runtime.agent != Agent::Gajae
+        || !runtime.trusted
+        || !runtime.verified
+        || !matches!(runtime.version.as_str(), "0.10.2" | "0.20.0")
+    {
+        return Err("Select a verified Gajae-Code 0.10.2 or 0.20.0 runtime".into());
+    }
+    let executable = registry::verify(&runtime.executable)?;
+    let cwd = registry::directory(&launch.cwd)?;
+    let profile: Router = required(
+        deck,
+        Table::Routers,
+        &preset.router_id,
+        "The selected Router profile is unavailable",
+    )?;
+    let documents =
+        native_gjc::refresh_documents(&preset, &profile, &launch.token, &selection.catalog)?;
+    let paths = native_gjc::prepare(
+        std::path::Path::new(&deck.directory),
+        &cwd,
+        uuid::Uuid::parse_str(&launch.id).map_err(error)?,
+        &preset,
+        &documents,
+    )?;
+    let mut command = CommandBuilder::new(&executable.path);
+    command.cwd(&cwd);
+    let token = if profile.authentication == "bearer" {
+        launch.token.as_str()
+    } else {
+        ""
+    };
+    native_gjc::configure_command(
+        &mut command,
+        &paths,
+        &runtime.version,
+        token,
+        Some(&documents.endpoint),
+    );
+    command.env("GJC_HOST_STATUS", "terax");
+    command.arg("--session-dir");
+    command.arg(&paths.session_directory);
+    command.args(["--model", &documents.selector]);
+    let snapshot = Session {
+        id: launch.id,
+        name: launch.name.trim().into(),
+        runtime_id: runtime.id,
+        agent: runtime.agent,
+        version: runtime.version,
+        executable,
+        cwd: cwd.to_string_lossy().into_owned(),
+        router_id: Some(profile.id),
+        endpoint: Some(documents.endpoint),
+        router_revision: Some(profile.updated_at),
+        model: documents.selector,
+        created_at: now(),
+        resume_source_id: None,
+        gjc: None,
+        team: false,
+        external_history: None,
+        native_gjc: Some(paths),
+    };
+    record_launch(
+        deck,
+        window,
+        snapshot,
+        command,
+        (launch.cols, launch.rows),
+        Default::default(),
+        None,
+    )
+}
+
+fn open_external_history(deck: &Deck, window: WebviewWindow, launch: Launch) -> Result<Session> {
+    let source = launch.external_history.ok_or("Select a GJC history file")?;
+    let runtime: Runtime = required(
+        deck,
+        Table::Runtimes,
+        &launch.runtime_id,
+        "The GJC runtime is unavailable",
+    )?;
+    if runtime.agent != Agent::Gajae
+        || !runtime.trusted
+        || !runtime.verified
+        || !matches!(runtime.version.as_str(), "0.10.2" | "0.20.0")
+    {
+        return Err("Select a verified Gajae-Code 0.10.2 or 0.20.0 runtime".into());
+    }
+    let executable = registry::verify(&runtime.executable)?;
+    let agent = gjc_history::agent_directory(Some(
+        source
+            .agent_directory
+            .to_str()
+            .ok_or("Invalid GJC agent directory")?,
+    ))?;
+    let entry = gjc_history::inspect(&source.path, agent)?;
+    if entry.source.session_id != source.session_id {
+        return Err("The GJC history file changed. Select it again.".into());
+    }
+    let cwd = registry::directory(entry.cwd.to_str().ok_or("Invalid GJC working directory")?)?;
+    let history_lease = gjc_history::lease(std::path::Path::new(&deck.directory), &entry.source)?;
+    let saved = deck
+        .store
+        .list::<Session>(Table::Sessions)?
+        .into_iter()
+        .find(|session| {
+            session
+                .external_history
+                .as_ref()
+                .is_some_and(|source| source.same_file(&entry.source))
+                || session.native_gjc.as_ref().is_some_and(|paths| {
+                    paths.agent_directory == entry.source.agent_directory
+                        && entry.source.path.starts_with(&paths.session_directory)
+                })
+        });
+    if let Some(saved) = &saved {
+        if saved.native_gjc.is_some() && saved.runtime_id != runtime.id {
+            return Err("Resume this managed conversation with its original GJC runtime".into());
+        }
+        if saved
+            .external_history
+            .as_ref()
+            .is_some_and(|source| source.session_id != entry.source.session_id)
+        {
+            return Err("A different conversation now occupies this saved history path. Remove the old Deck entry before opening it.".into());
+        }
+        if saved
+            .external_history
+            .as_ref()
+            .is_some_and(|source| source.agent_directory != entry.source.agent_directory)
+        {
+            return Err(
+                "Open this conversation with the original GJC agent directory saved in Deck".into(),
+            );
+        }
+    }
+    if launch.resume_from.is_some()
+        && launch.resume_from.as_deref() != saved.as_ref().map(|session| session.id.as_str())
+    {
+        return Err("The selected record does not match this saved Deck session".into());
+    }
+    let mut command = CommandBuilder::new(&executable.path);
+    command.cwd(&cwd);
+    command.env("GJC_CODING_AGENT_DIR", &entry.source.agent_directory);
+    command.env_remove("PI_CODING_AGENT_DIR");
+    command.env_remove("GJC_AGENT_DIR");
+    command.env("GJC_HOST_STATUS", "terax");
+    let managed = saved
+        .as_ref()
+        .and_then(|session| session.native_gjc.clone());
+    if let Some(paths) = &managed {
+        native_gjc::configure_command(
+            &mut command,
+            paths,
+            &runtime.version,
+            &launch.token,
+            saved
+                .as_ref()
+                .and_then(|session| session.endpoint.as_deref()),
+        );
+    }
+    command.arg("--resume");
+    command.arg(&entry.source.path);
+    let model = launch.model.trim();
+    if model.starts_with('-') || model.contains('\0') {
+        return Err("Enter a valid GJC model selector".into());
+    }
+    if !model.is_empty() {
+        command.args(["--model", model]);
+    }
+    let snapshot = Session {
+        id: launch.id,
+        name: launch.name.trim().into(),
+        runtime_id: runtime.id,
+        agent: Agent::Gajae,
+        version: runtime.version,
+        executable,
+        cwd: cwd.to_string_lossy().into_owned(),
+        router_id: saved.as_ref().and_then(|session| session.router_id.clone()),
+        endpoint: saved.as_ref().and_then(|session| session.endpoint.clone()),
+        router_revision: saved.as_ref().and_then(|session| session.router_revision),
+        model: if model.is_empty() {
+            saved
+                .as_ref()
+                .map(|session| session.model.clone())
+                .unwrap_or_default()
+        } else {
+            model.into()
+        },
+        created_at: now(),
+        resume_source_id: saved.map(|session| session.id),
+        gjc: None,
+        team: false,
+        external_history: Some(entry.source),
+        native_gjc: managed,
+    };
+    record_launch(
+        deck,
+        window,
+        snapshot,
+        command,
+        (launch.cols, launch.rows),
+        SessionResources {
+            history_lease: Some(history_lease),
+            ..Default::default()
+        },
+        None,
+    )
+}
+
+fn resolve_team(runtime: &Runtime, launch: &Launch) -> Result<Option<team::Plan>> {
+    launch
+        .team
+        .then(|| {
+            diagnostics::stage(
+                team::Plan::verify(runtime),
+                "team.engine_validation_failed",
+                Some(&launch.id),
+            )
+        })
+        .transpose()
+}
+
+fn prepare_team(
+    deck: &Deck,
+    id: &str,
+    plan: Option<team::Plan>,
+    command: &mut CommandBuilder,
+) -> Result<Option<team::Workspace>> {
+    plan.map(|plan| {
+        let directory = registry::directory(&deck.directory)?;
+        diagnostics::stage(
+            plan.prepare(&directory, id, command),
+            "team.prepare_failed",
+            Some(id),
+        )
+    })
+    .transpose()
 }
 
 fn record_launch(
@@ -661,9 +1021,10 @@ fn record_launch(
     snapshot: Session,
     command: CommandBuilder,
     size: (u16, u16),
-    prepared: gjc::Prepared,
+    resources: SessionResources,
+    writer: Option<std::fs::File>,
 ) -> Result<Session> {
-    deck.terminal.start_with_lease(
+    deck.terminal.start_with_resources(
         snapshot.id.clone(),
         snapshot.resume_source_id.as_deref(),
         command,
@@ -671,9 +1032,9 @@ fn record_launch(
         move |event| {
             let _ = window.emit("terminal-ready", event);
         },
-        prepared.lease,
+        resources,
     )?;
-    drop(prepared.writer);
+    drop(writer);
     // A resume gets a fresh process snapshot while its saved history row keeps its identity.
     if let Err(e) = snapshot
         .resume_source_id
@@ -750,7 +1111,22 @@ pub async fn resolve_session(app: AppHandle, id: String) -> Result<()> {
         )?;
         registry::directory(&session.cwd)?;
         registry::verify(&runtime.executable)?;
-        if let Some(history) = session.gjc {
+        if let Some(paths) = session.native_gjc {
+            if !paths.agent_directory.join("models.yml").is_file()
+                || !paths.agent_directory.join("config.yml").is_file()
+                || !paths.session_directory.is_dir()
+            {
+                return Err(
+                    "The generated GJC configuration or conversation directory is missing".into(),
+                );
+            }
+        } else if let Some(source) = session.external_history {
+            let agent = gjc_history::agent_directory(source.agent_directory.to_str())?;
+            let entry = gjc_history::inspect(&source.path, agent)?;
+            if entry.source.session_id != source.session_id {
+                return Err("The saved path now contains a different GJC conversation".into());
+            }
+        } else if let Some(history) = session.gjc {
             let preset: gjc::GjcPreset = required(
                 &deck,
                 Table::GjcPresets,

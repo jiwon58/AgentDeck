@@ -10,3 +10,5 @@ Terminal delivery uses a bounded per-session queue, sequenced Tauri notification
 
 Only absolute native executables are launched. Registry scanning does not spawn. The version probe and launch recheck the approved executable digest. Manually supplied interpreter arguments and dependent scripts are part of the command the operator approves. Their contents are outside the executable digest.
 
+An explicit GJC 0.10.2 Team launch puts the checked GJC command in a new psmux instance in the same Deck PTY. Each instance has its own temporary registry and a process-local path to the registered GJC version. The Deck helper forwards psmux commands. For GJC's worker startup, it decodes the upstream literal payload, checks the executable and environment names, and starts the worker with separate arguments in the same pane. The existing terminal supervisor owns the workspace and tears it down when the tab exits.
+

@@ -22,7 +22,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 const live = (tab: TabState) => ['starting', 'running', 'stopping'].includes(tab.status);
-const historyId = (tab: TabState) => tab.launch.resume_from ?? tab.launch.id;
+const historyId = (tab: TabState) => tab.session?.resume_source_id ?? tab.launch.resume_from ?? tab.launch.id;
 const tabForHistory = (tabs: TabState[], id: string, active: string) =>
   tabs.find(tab => tab.launch.id === active && historyId(tab) === id)
   ?? [...tabs].reverse().find(tab => historyId(tab) === id);
@@ -149,6 +149,9 @@ function App() {
   const pinned = new Set(data?.session_layout.pinned);
   const pinnedSessions = history.filter(session => pinned.has(session.id));
   const unpinnedSessions = history.filter(session => !pinned.has(session.id));
+  const openHistory = new Set(tabs.map(historyId));
+  const openSessions = unpinnedSessions.filter(session => openHistory.has(session.id));
+  const closedSessions = unpinnedSessions.filter(session => !openHistory.has(session.id));
   const updateLayout = (task: ReturnType<typeof api.groupSessions>) => void task.then(layout => {
     setData(current => current && { ...current, session_layout: layout });
   }).catch(reason => setError(readable(reason)));
@@ -158,6 +161,12 @@ function App() {
       pinned={pinned.has(session.id)} onPin={() => updateLayout(api.pinSession(session.id, !pinned.has(session.id)))}
       key={session.id} onSelect={() => select(session)} />;
   };
+  const renderSessionRows = (sessions: Session[]) => data?.session_layout.grouped
+    ? projectGroups(sessions).map(group => <section key={group.path} className="session-group">
+      <h4 className="session-group-name session-project ellipsis" title={group.path}>{group.path}</h4>
+      {group.sessions.map(renderSaved)}
+    </section>)
+    : sessions.map(renderSaved);
   const switchItems = [...pinnedSessions, ...unpinnedSessions].map(session => ({
     id: session.id, name: session.name, cwd: session.cwd, agent: agents[session.agent],
     status: sessionIndicator(tabForHistory(tabs, session.id, active)).text,
@@ -201,15 +210,18 @@ function App() {
             <input type="checkbox" checked={data?.session_layout.grouped ?? false}
               onChange={event => updateLayout(api.groupSessions(event.target.checked))} /> Group by project
           </label>}
-          {pinnedSessions.length > 0 && <section><h3 className="session-group-name">Pinned</h3>{pinnedSessions.map(renderSaved)}</section>}
-          {transientTabs.map(tab =>
+          {pinnedSessions.length > 0 && <section className="session-section"><h3 className="session-group-name">Pinned</h3>{pinnedSessions.map(renderSaved)}</section>}
+          {(openSessions.length > 0 || transientTabs.length > 0) && <section className="session-section">
+            <h3 className="session-group-name">Open tabs</h3>
+            {renderSessionRows(openSessions)}
+            {transientTabs.map(tab =>
             <SessionRow key={tab.launch.id} session={tab.session} tab={tab} selected={tab.launch.id === active}
-              onSelect={() => activateTab(tab.launch.id)} />)}
-          {data?.session_layout.grouped ? projectGroups(unpinnedSessions).map(group =>
-            <section key={group.path} className="session-group">
-              <h3 className="session-group-name ellipsis" title={group.path}>{group.path}</h3>
-              {group.sessions.map(renderSaved)}
-            </section>) : unpinnedSessions.map(renderSaved)}
+                onSelect={() => activateTab(tab.launch.id)} />)}
+          </section>}
+          {closedSessions.length > 0 && <section className="session-section">
+            <h3 className="session-group-name">History</h3>
+            {renderSessionRows(closedSessions)}
+          </section>}
         </div>
       </aside>
       <main>

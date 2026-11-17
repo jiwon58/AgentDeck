@@ -1,5 +1,11 @@
 # Testing
 
+Set `DECK_WEB_YAML_ONLY=1` and `DECK_GJC_0102` for the WebView Router YAML smoke test. It loads a saved preset through the UI, starts a real agent against a loopback router, checks the generated files and workspace history, rejects a stale model catalog, and resumes the original Deck history row.
+
+Set `DECK_EXTERNAL_HISTORY_ONLY=1` and supply the approved GJC executable paths using `DECK_GJC_0102` and/or `DECK_GJC_0200`. The Windows smoke test creates a conversation through the real GJC CLI outside Deck, opens the file through Deck, and checks that a loopback inference request contains the previous context. It also verifies that GJC appends to the original JSONL, Deck blocks a concurrent open, and reopening retains one saved Deck entry.
+
+Set `DECK_TEAM_ONLY=1`, `DECK_GJC_0102` to the verified Windows release executable and `DECK_TEAM_PSMUX` to the official psmux 3.4.0 Windows x64 executable. Build with `--features custom-protocol,test-fixture` so the smoke runner can stage `deck-team-mux.exe` alongside psmux. The Team smoke launches the actual GJC release in Deck's multiplexer session, runs GJC's Team CLI against its pane, and checks for inference requests from workers against a loopback router. It uses a disposable Git repository and a path with spaces, Hangul and an apostrophe.
+
 The session-tools smoke test searches and bookmarks retained output, verifies that read-only blocks typed and pasted input, compares two live terminals, checks reply navigation, and reopens the app to verify saved project grouping and pins.
 
 Set `DECK_GJC_CHECK_STATUS=1` with both GJC executable paths to cover the 0.10.2 rendered indicators, the 0.20.0 native status protocol, and restoration of a real queued draft with Alt+Up. Run `node --experimental-strip-types tests/integration/terminal-keys.mjs` for the modifier-encoding checks. With internet access, `DECK_INSTALL_ONLY=1` and `DECK_PUBLISHER_DOWNLOADS=1` exercise the publisher download UI, inspect and run Claude Code's version command, validate Hermes bootstrap destination resolution, and reject a modified Hermes script.

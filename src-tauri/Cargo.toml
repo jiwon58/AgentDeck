@@ -1,12 +1,25 @@
 [package]
 name = "agent-deck"
-version = "0.1.11"
+version = "0.1.16"
 edition = "2021"
 default-run = "agent-deck"
 
 [features]
+default = ["web"]
+web = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-build", "dep:serde_yaml_ng"]
+native = ["dep:eframe", "dep:alacritty_terminal", "dep:serde_yaml_ng", "dep:dirs", "dep:rfd"]
 custom-protocol = ["tauri/custom-protocol"]
 test-fixture = []
+
+[[bin]]
+name = "agent-deck"
+path = "src/main.rs"
+required-features = ["web"]
+
+[[bin]]
+name = "agent-deck-native"
+path = "src/bin/agent-deck-native.rs"
+required-features = ["native"]
 
 [[bin]]
 name = "mock-agent"
@@ -19,17 +32,23 @@ path = "tests/mvp.rs"
 required-features = ["test-fixture"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
+tauri = { version = "2", features = [], optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow"], optional = true }
+alacritty_terminal = { version = "0.25", default-features = false, optional = true }
+serde_yaml_ng = { version = "0.10", optional = true }
+dirs = { version = "6", optional = true }
+rfd = { version = "0.17.2", default-features = false, optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 portable-pty = "0.9"
 rusqlite = { version = "0.38", features = ["bundled"] }
 sha2 = "0.10"
-uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+uuid = { version = "1", features = ["v4", "serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt"] }
 wait-timeout = "0.2"

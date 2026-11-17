@@ -32,13 +32,14 @@ export function SessionRow({ session, tab, selected, onSelect, pinned, onPin }: 
 }) {
   const status = sessionIndicator(tab);
   const name = session?.name ?? tab?.launch.name;
+  const cwd = session?.cwd || tab?.launch.cwd;
+  const project = cwd?.split(/[\\/]+/).filter(Boolean).at(-1);
   return <div className={`session-row ${selected ? 'selected' : ''}`}>
     <button className="session-item" onClick={onSelect} aria-current={selected ? 'true' : undefined}>
-      <strong>{name}</strong>
-      {session && <><span>{agents[session.agent]} · {session.version}</span>
-        <small className="ellipsis" title={session.cwd}>{session.cwd}</small></>}
-      <small className="session-status"><i className={`dot ${status.color}`} aria-hidden="true" />{status.text}</small>
-      {status.detail && <small>{status.detail}</small>}
+      <strong className="ellipsis" title={name}>{name}</strong>
+      {session && <span className="session-runtime ellipsis">{agents[session.agent]} · {session.version}{session.team ? ' · Team' : ''}</span>}
+      <small className={`session-status ${status.color}`} title={status.detail}><i className={`dot ${status.color}`} aria-hidden="true" />{status.text}</small>
+      {cwd && <small className="session-path ellipsis" title={cwd} aria-label={cwd}>{project ?? cwd}</small>}
     </button>
     {onPin && <button type="button" className="session-pin" aria-label={`${pinned ? 'Unpin' : 'Pin'} ${name}`}
       title={pinned ? 'Unpin session' : 'Pin session'} aria-pressed={pinned} onClick={onPin}>{pinned ? '★' : '☆'}</button>}

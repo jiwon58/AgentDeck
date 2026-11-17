@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { Agent, Candidate, GjcPreset, GjcPreview, Launch, ModelCatalog, ModelProtocol, ModelTest, Overview, Probe, Router, Runtime, SessionLayout, TerminalEvent } from './types';
+import type { GjcHistoryEntry, GjcYamlPreset } from './types';
 
 export const api = {
   overview: () => invoke<Overview>('overview'),
@@ -13,6 +14,11 @@ export const api = {
   savePreset: (preset: GjcPreset) => invoke<GjcPreset>('save_gjc_preset', { preset }),
   deletePreset: (id: string, revision: number) => invoke<void>('delete_gjc_preset', { id, revision }),
   previewPreset: (launch: Launch) => invoke<GjcPreview>('preview_gjc_preset', { launch }),
+  yamlPresets: () => invoke<Record<string, GjcYamlPreset>>('yaml_presets'),
+  saveYamlPreset: (preset: GjcYamlPreset) => invoke<void>('save_yaml_preset', { preset }),
+  managedGjcHistory: (id: string) => invoke<{ entries: GjcHistoryEntry[]; limited: boolean }>('list_managed_gjc_history', { id }),
+  gjcHistory: (agentDirectory: string) => invoke<{ entries: GjcHistoryEntry[]; limited: boolean }>('list_gjc_history', { agentDirectory }),
+  inspectGjcHistory: (path: string, agentDirectory: string) => invoke<GjcHistoryEntry>('inspect_gjc_history', { path, agentDirectory }),
   scan: (agent: Agent, path: string) => invoke<{ candidates: Candidate[]; warnings: string[] }>('scan', { agent, path }),
   inspect: (path: string) => invoke<Candidate>('inspect_executable', { path }),
   register: (request: { agent: Agent; name: string; candidate: Candidate; arguments: string[]; probe_args: string[];
@@ -39,6 +45,8 @@ export const api = {
 };
 export const browse = (directory: boolean) => open({ directory, multiple: false,
   filters: directory ? undefined : [{ name: 'Windows executable', extensions: ['exe'] }] });
+export const browseGjcHistory = () => open({ multiple: false, filters: [{ name: 'GJC session', extensions: ['jsonl'] }] });
+export const browseYaml = () => open({ multiple: false, filters: [{ name: 'YAML template', extensions: ['yml', 'yaml'] }] });
 export function lines(value: string) { return value.split(/\r?\n/).filter(line => line !== ''); }
 export function environment(value: string) {
   return Object.fromEntries(lines(value).map(line => {

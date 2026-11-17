@@ -24,7 +24,14 @@ pub struct Event {
     pub session_id: String,
     pub event_type: &'static str,
     pub sequence_number: u64,
-    pub payload: serde_json::Value,
+    pub payload: Payload,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum Payload {
+    Bytes(Vec<u8>),
+    Json(serde_json::Value),
 }
 
 struct Output {
@@ -47,6 +54,10 @@ struct Live {
 
 impl Live {
     fn push(&self, kind: &'static str, payload: serde_json::Value) {
+        self.enqueue(kind, Payload::Json(payload));
+    }
+
+    fn enqueue(&self, kind: &'static str, payload: Payload) {
         if let Ok(mut output) = self.output.lock() {
             let notify = output.queue.is_empty();
             let sequence_number = output.next;
@@ -69,7 +80,7 @@ impl Live {
                     session_id: self.id.clone(),
                     event_type: kind,
                     sequence_number,
-                    payload: serde_json::Value::Null,
+                    payload: Payload::Json(serde_json::Value::Null),
                 });
             }
         }
@@ -97,6 +108,13 @@ fn size(cols: u16, rows: u16) -> PtySize {
     }
 }
 
+#[derive(Default)]
+pub struct SessionResources {
+    pub team: Option<crate::team::Workspace>,
+    pub models_lease: Option<std::fs::File>,
+    pub history_lease: Option<std::fs::File>,
+}
+
 impl Terminal {
     pub fn start(
         &self,
@@ -105,17 +123,17 @@ impl Terminal {
         dimensions: (u16, u16),
         notify: impl Fn(&Event) + Send + Sync + 'static,
     ) -> Result<()> {
-        self.start_with_lease(id, None, command, dimensions, notify, None)
+        self.start_with_resources(id, None, command, dimensions, notify, Default::default())
     }
 
-    pub fn start_with_lease(
+    pub fn start_with_resources(
         &self,
         id: String,
         resume_from: Option<&str>,
         command: CommandBuilder,
         dimensions: (u16, u16),
         notify: impl Fn(&Event) + Send + Sync + 'static,
-        lease: Option<std::fs::File>,
+        resources: SessionResources,
     ) -> Result<()> {
         let mut sessions = self.sessions.lock().map_err(error)?;
         if self.closing.load(Ordering::Acquire) {
@@ -189,7 +207,7 @@ impl Terminal {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(count) => {
-                        output.push("terminal_output", serde_json::json!(&buffer[..count]))
+                        output.enqueue("terminal_output", Payload::Bytes(buffer[..count].to_vec()))
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     // Windows reports a broken pipe when the pseudoconsole closes.
@@ -258,7 +276,7 @@ impl Terminal {
                 thread::sleep(Duration::from_millis(30));
             };
             drop(job);
-            drop(lease);
+            drop(resources);
             live.done.store(true, Ordering::Release);
             let master = live.master.lock().ok().and_then(|mut master| master.take());
             drop(master);

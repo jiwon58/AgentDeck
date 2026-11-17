@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { browse, environment, lines, readable } from './api';
 import { GjcPresetLaunch } from './GjcPresets';
+import { GjcYaml } from './GjcYaml';
+import { NativeTeam, teamRuntime } from './NativeTeam';
+import { OpenGjcHistory } from './OpenGjcHistory';
 import { agents, agentKeys, type Agent, type Launch, type Overview, type Session } from './types';
 
 type Props = {
@@ -12,13 +15,17 @@ export function NewSession(props: Props) {
   const { data, previous, resume } = props;
   const preferred = data.runtimes.find(item => item.id === data.preferences.last_runtime);
   const hasPreset = data.gjc_presets.some(preset => preset.enabled);
-  const [presetMode, setPresetMode] = useState(Boolean(previous?.gjc) || (!previous && hasPreset && (!preferred || preferred.agent === 'gajae')));
+  const [mode, setMode] = useState((previous?.external_history || previous?.native_gjc) && resume ? 'history' :
+    previous?.native_gjc ? 'yaml' : previous?.gjc || (!previous && hasPreset && (!preferred || preferred.agent === 'gajae')) ? 'preset' : 'runtime');
   return <div className="stack">
     {!resume && <nav className="settings-nav" aria-label="Launch configuration">
-      <button type="button" className={presetMode ? 'selected' : ''} onClick={() => setPresetMode(true)}>GJC preset</button>
-      <button type="button" className={!presetMode ? 'selected' : ''} onClick={() => setPresetMode(false)}>Agent runtime</button>
+      <button type="button" className={mode === 'preset' ? 'selected' : ''} onClick={() => setMode('preset')}>GJC preset</button>
+      <button type="button" className={mode === 'yaml' ? 'selected' : ''} onClick={() => setMode('yaml')}>Router YAML</button>
+      <button type="button" className={mode === 'runtime' ? 'selected' : ''} onClick={() => setMode('runtime')}>Agent runtime</button>
+      <button type="button" className={mode === 'history' ? 'selected' : ''} onClick={() => setMode('history')}>Open GJC history</button>
     </nav>}
-    {presetMode ? <GjcPresetLaunch {...props} /> : <RuntimeLaunch {...props} />}
+    {mode === 'preset' ? <GjcPresetLaunch {...props} /> : mode === 'yaml' ? <GjcYaml data={data} previous={previous} onLaunch={props.onLaunch} />
+      : mode === 'history' ? <OpenGjcHistory {...props} /> : <RuntimeLaunch {...props} />}
   </div>;
 }
 
@@ -36,6 +43,7 @@ function RuntimeLaunch({ data, previous, resume, runningPaths, onLaunch, onSetti
   const [manual, setManual] = useState(false);
   const [protocol, setProtocol] = useState<Launch['manual_protocol']>();
   const [error, setError] = useState('');
+  const [team, setTeam] = useState(Boolean(previous?.team));
   const runtimes = data.runtimes.filter(item => item.agent === agent);
   const runtime = runtimes.find(item => item.id === runtimeId);
   const router = data.routers.find(item => item.id === routerId);
@@ -47,7 +55,7 @@ function RuntimeLaunch({ data, previous, resume, runningPaths, onLaunch, onSetti
     event.preventDefault();
     try {
       onLaunch({ id: crypto.randomUUID(), name, runtime_id: runtimeId, cwd: effectiveCwd, router_id: routerId || null,
-        resume_from: resume ? previous?.id : undefined,
+        resume_from: resume ? previous?.id : undefined, team: data.team_available && teamRuntime(runtime) && team,
         model, extra: lines(extra), env: environment(env), token, manual_router: manual, manual_protocol: manualProtocol, cols: 80, rows: 24 });
     } catch (reason) { setError(readable(reason)); }
   }}>
@@ -57,9 +65,9 @@ function RuntimeLaunch({ data, previous, resume, runningPaths, onLaunch, onSetti
     {error && <p role="alert" className="notice danger">{error}</p>}
     <label>Session name<input value={name} readOnly={resume} onChange={e => setName(e.target.value)} required autoFocus /></label>
     <div className="two">
-      <label>Agent<select value={agent} disabled={resume} onChange={e => { setAgent(e.target.value as Agent); setRuntime(''); setManual(false); setToken(''); }}>
+      <label>Agent<select value={agent} disabled={resume} onChange={e => { setAgent(e.target.value as Agent); setRuntime(''); setManual(false); setToken(''); setTeam(false); }}>
         {agentKeys.map(key => <option key={key} value={key}>{agents[key]}</option>)}</select></label>
-      <label>Runtime version<select required value={runtimeId} disabled={resume} onChange={e => { setRuntime(e.target.value); setManual(false); }}>
+      <label>Runtime version<select required value={runtimeId} disabled={resume} onChange={e => { setRuntime(e.target.value); setManual(false); setTeam(false); }}>
         <option value="">Select a runtime</option>{runtimes.map(item => <option value={item.id} key={item.id}>{item.version} · {item.name} · {item.executable.path}</option>)}
       </select></label>
     </div>
@@ -68,6 +76,7 @@ function RuntimeLaunch({ data, previous, resume, runningPaths, onLaunch, onSetti
       <button type="button" disabled={resume || !!runtime?.cwd_override} onClick={() => void browse(true).then(path => { if (path) setCwd(path); }).catch(e => setError(readable(e)))}>Browse</button></div>
     {runtime?.cwd_override && <small>This runtime supplies a working directory override.</small>}
     {overlap && <p className="notice">An active session uses this directory. Concurrent edits can conflict.</p>}
+    {teamRuntime(runtime) && <NativeTeam available={data.team_available} checked={team} onChange={setTeam} />}
     <div className="two"><label>Router profile<select value={routerId} onChange={e => { setRouter(e.target.value); setManual(false); setProtocol(undefined); setToken(''); }}>
       <option value="">Use Agent's own configuration</option>{data.routers.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {item.host}:{item.port}</option>)}
       </select></label><label>Model ID, optional<input value={model} placeholder={router?.model || ''} onChange={e => setModel(e.target.value)} /></label></div>

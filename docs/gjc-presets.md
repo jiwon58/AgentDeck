@@ -1,5 +1,21 @@
 # GJC presets and session history
 
+## Generate YAML from a Router catalog
+
+Create a reusable preset under **Settings → GJC YAML**, or open **New Session → Router YAML** to configure and launch immediately. Select a verified GJC 0.10.2 or 0.20.0, a Router profile, and optional `models.yml` and `config.yml` templates. Refresh the models and choose the default and any subset. Enter fallback token limits when the Router and template do not provide them.
+
+Deck checks the catalog again before launch and generates a separate YAML pair for each session. A changed list requires a fresh selection. Templates stay untouched. Bearer credentials are passed through memory to the process. Conversation storage can use Deck app data, a folder under a chosen root, or `.gjc/deck-sessions` in the workspace.
+
+To reopen a generated session, select its history row, choose **Resume Gajae-Code conversation**, and use **Find sessions** to select the original record. Use its original GJC runtime and re-enter the credential when the Router requires it. The WebView and native editions share the saved YAML presets.
+
+## Continue a conversation from another terminal
+
+In **New Session → Open GJC history**, select a verified GJC 0.10.2 or 0.20.0 runtime. Select the original GJC agent directory (the folder that contains `models.yml` and `config.yml`) or leave it blank to use the Deck process's GJC default. **Find sessions** lists recent records from its `sessions` tree. Use **Choose .jsonl file** for an explicit session directory outside that tree.
+
+Close the conversation in its previous terminal first. Deck uses the original working directory from the session header and passes the exact file to GJC's native Resume. GJC uses its original settings and blob store. If the original model is no longer served, enter an explicit `provider/model` override. Environment variables required by the old Router configuration must be present in the environment that started Deck. Deck cannot detect whether an independent GJC process already has the file open.
+
+The first open adds a Deck history entry linked to the original file. Subsequent opens reuse that entry. Deck stores the file path and GJC session ID, and reads the header for discovery. Conversation data and configuration remain under GJC's control.
+
 ## Set up a preset
 
 1. Register an approved GJC runtime and an enabled Local LLM Router profile.

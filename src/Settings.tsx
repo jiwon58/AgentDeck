@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { api, browse, environment, lines, readable } from './api';
 import { RouterModels } from './RouterModels';
 import { GjcPresetSettings } from './GjcPresets';
+import { GjcYaml } from './GjcYaml';
 import { AgentInstallSettings, type InstallReview } from './AgentInstallSettings';
 import { agents, agentKeys, type Agent, type Candidate, type Overview, type Probe, type Router } from './types';
 
@@ -21,7 +22,7 @@ export function Settings({ data, refresh }: { data: Overview; refresh: Refresh }
   };
   return <>
     <nav className="settings-nav" aria-label="Settings sections">
-      {['Agent Runtimes', 'Install Agents', 'GJC Presets', 'Local LLM Router', 'Terminal Preferences', 'Application & Offline Settings'].map(name =>
+      {['Agent Runtimes', 'Install Agents', 'GJC Presets', 'GJC YAML', 'Local LLM Router', 'Terminal Preferences', 'Application & Offline Settings'].map(name =>
         <button key={name} disabled={busy} className={section === name ? 'selected' : ''} onClick={() => { setReview(undefined); setSection(name); setMessage(''); }}>{name}</button>)}
     </nav>
     {message && <p className="notice danger" role="alert">{message}</p>}
@@ -31,6 +32,7 @@ export function Settings({ data, refresh }: { data: Overview; refresh: Refresh }
         setReview(value); setSection('Agent Runtimes');
       }} />}
       {section === 'GJC Presets' && <GjcPresetSettings data={data} refresh={refresh} />}
+      {section === 'GJC YAML' && <GjcYaml data={data} />}
       {section === 'Local LLM Router' && <RouterSettings data={data} refresh={refresh} task={task} />}
       {section === 'Terminal Preferences' && <TerminalSettings data={data} refresh={refresh} task={task} />}
       {section === 'Application & Offline Settings' && <OfflineSettings data={data} refresh={refresh} task={task} />}

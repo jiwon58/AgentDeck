@@ -48,25 +48,33 @@ aside p { padding: 8px; }
 .aside-actions { display: flex; align-items: center; gap: 8px; }
 .session-toggle { width: 26px; height: 26px; padding: 0; font-weight: 700; }
 .session-item {
-  width: 100%; display: grid; gap: 3px; text-align: left; margin-bottom: 5px; padding: 10px 9px;
+  width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; text-align: left; padding: 8px 9px;
   background: transparent; border-color: transparent;
 }
-.session-item strong { overflow-wrap: anywhere; }
-.session-item span { font-size: 12px; color: #afc2da; }
-.session-row { border: 1px solid transparent; border-radius: 6px; margin-bottom: 5px; position: relative; }
+.session-item strong { font-size: 13px; }
+.session-runtime { font-size: 11px; color: #9caabe; }
+.session-path { color: var(--muted); font-size: 11px; }
+.session-row { border: 1px solid #283345; border-radius: 6px; margin-bottom: 6px; position: relative; background: #161e2a; }
 .session-row:has(.session-pin) .session-item { padding-right: 33px; }
 .session-pin { position: absolute; right: 5px; top: 5px; padding: 3px 5px; background: transparent; border-color: transparent; }
 .session-pin[aria-pressed="true"] { color: #ffbf65; }
 .session-grouping { padding: 4px 7px 10px; font-size: 12px; color: var(--muted); }
-.session-group-name { margin: 8px 7px 4px; font-size: 11px; color: var(--muted); }
+.session-section { margin-bottom: 16px; }
+.session-group-name { margin: 0 2px 6px; font-size: 11px; color: #afbdd0; letter-spacing: .055em; text-transform: uppercase; }
+.session-project { margin: 9px 2px 5px; font-weight: 400; color: var(--muted); text-transform: none; letter-spacing: 0; }
 .switch-results { display: grid; gap: 5px; max-height: 52vh; overflow-y: auto; }
 .switch-item { min-width: 0; display: grid; gap: 2px; text-align: left; }
 .switch-item.selected { border-color: var(--accent); background: #24364b; }
 .attention-action { color: #ffbf65; border-color: #70582d; }
 .reply-badge { color: #ffbf65; margin-left: 8px; }
-.session-row.selected { background: #202e41; border-color: #334b64; }
+.session-row.selected { background: #202e41; border-color: #44627f; box-shadow: inset 2px 0 var(--accent); }
 .session-row .session-item { margin-bottom: 0; }
-.session-status { color: #e1eaf7; }
+.session-status { display: flex; align-items: baseline; margin-top: 3px; color: #cfdaea; font-size: 11px; }
+.session-status .dot { flex: none; }
+.session-status.waiting_for_reply { color: #ffcb84; }
+.session-status.in_progress { color: #c7b8ff; }
+.session-status.completed { color: #95e2bc; }
+.session-status.failed { color: #ffb3bb; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #778497; margin-right: 7px; }
 .dot.running { background: #67d5aa; }
 .dot.starting { background: #83bfff; }
@@ -167,3 +175,4 @@ details[open] > :not(summary) { margin-top: 8px; }
 .preset-preview { display: grid; grid-template-columns: minmax(7rem, auto) minmax(0, 1fr); gap: .5rem 1rem; }
 .preset-preview dt { color: var(--muted); }
 .preset-preview dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.yaml-models { display: grid; gap: 6px; max-height: 170px; overflow-y: auto; overflow-wrap: anywhere; }

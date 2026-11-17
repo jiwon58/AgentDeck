@@ -1,5 +1,15 @@
 # User guide
 
+## GJC Team on native Windows
+
+In **New Session**, select a verified **Gajae-Code 0.10.2 x64** runtime or its GJC preset, choose a Git checkout with a commit, and enable **GJC Team (native Windows)**. Git for Windows must be available to GJC. The Team-enabled portable build includes psmux. Use `$team` in GJC with your task and choose the worker count as you normally would. Deck makes the selected version available as `gjc` on the Team session's process-local PATH for the Team skill's CLI calls.
+
+Click a pane to focus it or press `Ctrl+B` and then an arrow key. Hold `Shift` when selecting terminal text. Close the Deck tab to stop the Team processes. The saved Deck session can reopen the GJC conversation picker, while workers and pane state are created again only when you start a new Team. GJC owns any worktrees and Team state it created.
+
+Extract the Team ZIP to a path without shell metacharacters such as parentheses or ampersands. Spaces and Korean characters are supported.
+
+Leave the Team box clear for a direct GJC session, including your usual `$ultragoal` workflow. In Team view, use GJC’s Team status for individual workers. Deck displays the outer terminal state.
+
 ## Monitor long-running GJC sessions
 
 Use your normal GJC session and start ultragoal inside that terminal using the workflow supported by your GJC build. Deck's terminal tools run over the current native ConPTY sessions and require no tmux or Team setup. **Next reply** cycles through running sessions Deck recognizes as awaiting a response. **Sessions** (or **Ctrl+K** while a Deck control has focus) searches names, paths, agents, and session status. In the sidebar, **Group by project** groups matching working directories, and the star pins a saved session. Deck saves only these layout preferences.

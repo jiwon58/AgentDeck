@@ -1,8 +1,10 @@
 # Agent Deck
 
-Agent Deck is a Windows x64 desktop terminal manager for Gajae-Code, Claude Code, Hermes Agent and custom CLI installations. It uses a local React interface, Rust and Tauri 2, xterm.js, Windows ConPTY via portable-pty, and bundled SQLite.
+Agent Deck is a Windows x64 desktop terminal manager for Gajae-Code, Claude Code, Hermes Agent and custom CLI installations. The default desktop build uses Tauri, WebView2 and xterm.js with a Rust ConPTY backend and bundled SQLite. The [native Rust edition](docs/native.md) is available as a separate build.
 
 Use [GJC presets](docs/gjc-presets.md) to reuse a model and router configuration and reopen saved conversations from the original workspace.
+
+The Windows portable build can include psmux for GJC 0.10.2 Team sessions. See the [Team controls and prerequisites](docs/user-guide.md#gjc-team-on-native-windows).
 
 ## Development
 
@@ -29,6 +31,8 @@ npm run tauri -- build --no-bundle -- --locked
 ```
 
 Transfer the generated ZIP and matching SHA-256 file from `artifacts`. Check the archive hash, extract it, and start `AgentDeck.exe`. The target machine needs WebView2 and the Agent installations selected by the operator. Rust, Cargo and Node.js are build-time dependencies.
+
+To include Team support, build the release helper with `cargo build --locked --release --bin deck-team-mux`, obtain the official `psmux-v3.4.0-windows-x64.zip`, and run `.\packaging\New-Portable.ps1 -TeamArchive <path-to-zip>` in place of the base packaging command. The script verifies the upstream archive and binary and includes the MIT license. Keep the resulting `team` folder beside Agent Deck. [psmux v3.4.0 release](https://github.com/psmux/psmux/releases/tag/v3.4.0)
 
 To build the optional Windows offline NSIS installer on the internet-connected build machine, use `npm run tauri -- build --bundles nsis -- --locked`. The configuration requests the official WebView2 offline installer.
 

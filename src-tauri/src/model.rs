@@ -98,6 +98,18 @@ pub struct Session {
     pub resume_source_id: Option<String>,
     #[serde(default)]
     pub gjc: Option<crate::gjc::HistorySnapshot>,
+    #[serde(default)]
+    pub team: bool,
+    #[serde(default)]
+    pub external_history: Option<crate::gjc_history::Source>,
+    #[serde(default)]
+    pub native_gjc: Option<NativeGjcSnapshot>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct NativeGjcSnapshot {
+    pub agent_directory: std::path::PathBuf,
+    pub session_directory: std::path::PathBuf,
 }
 
 #[derive(Default, Deserialize)]
@@ -119,6 +131,10 @@ pub struct Launch {
     pub cols: u16,
     pub rows: u16,
     pub gjc: Option<crate::gjc::Selection>,
+    pub external_history: Option<crate::gjc_history::Source>,
+    pub team: bool,
+    #[cfg(any(feature = "native", feature = "web"))]
+    pub yaml: Option<crate::native_gjc::Selection>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -142,6 +158,7 @@ impl Default for Preferences {
 #[derive(Serialize)]
 pub struct Overview {
     pub app_version: &'static str,
+    pub team_available: bool,
     pub roots: Vec<Root>,
     pub runtimes: Vec<Runtime>,
     pub routers: Vec<Router>,

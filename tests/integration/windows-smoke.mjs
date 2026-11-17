@@ -3,7 +3,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
@@ -11,6 +11,8 @@ const application = resolve(process.argv[2] ?? 'target/release/agent-deck.exe');
 const fixture = resolve(process.argv[3] ?? 'target/release/mock-agent.exe');
 const root = await mkdtemp(join(tmpdir(), 'agent-deck-smoke-'));
 let resumedContextSeen = false;
+let externalContextSeen = false;
+const teamWorkerRequests = new Set();
 let servedModels = ['mock-local', 'old-model'];
 const anthropicToken = 'temporary-fixture-authorization';
 const mock = createServer((request, response) => {
@@ -50,6 +52,11 @@ const mock = createServer((request, response) => {
     request.once('end', () => {
       const input = JSON.parse(body);
       const messages = input.messages;
+      const serialized = JSON.stringify(messages);
+      if (serialized.includes('Deck native Team fixture')) {
+        const worker = serialized.match(/You are (worker-\d+) in gjc team/);
+        if (worker) teamWorkerRequests.add(worker[1]);
+      }
       if (input.stream === false) {
         if (!servedModels.includes(input.model)) {
           response.writeHead(404).end('{"error":{"message":"missing model"}}');
@@ -63,6 +70,10 @@ const mock = createServer((request, response) => {
       if (messages.at(-1)?.role === 'user' && JSON.stringify(messages.at(-1).content).includes('Deck resumed context probe')) {
         resumedContextSeen = messages.slice(0, -1).some(message =>
           message.role === 'user' && JSON.stringify(message.content).includes('Deck ask status probe'));
+      }
+      if (messages.at(-1)?.role === 'user' && JSON.stringify(messages.at(-1).content).includes('Deck follow-up from imported record')) {
+        externalContextSeen = messages.slice(0, -1).some(message => message.role === 'user' &&
+          JSON.stringify(message.content).includes('Deck original external record'));
       }
       response.writeHead(200, { 'Content-Type': 'text/event-stream' });
       const chunk = (delta, finish_reason) => `data: ${JSON.stringify({
@@ -117,6 +128,7 @@ const updatedRouter = createServer();
 await new Promise(resolve => updatedRouter.listen(0, '127.0.0.1', resolve));
 let app;
 let browser;
+let teamEngine;
 let presetIds = [];
 const presetPrefix = 'Smoke preset ' + suffix;
 
@@ -136,6 +148,7 @@ async function start() {
   const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'path'));
   app = spawn(application, [], {
     env: { ...environment, PATH: `${system}\\System32;${system}`,
+      ...(teamEngine ? { DECK_TEAM_PSMUX: teamEngine } : {}),
       AGENT_DECK_TEST_DATA_DIR: join(root, 'deck-data'),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort} --no-proxy-server --host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE tauri.localhost, EXCLUDE ipc.localhost"`,
       WEBVIEW2_USER_DATA_FOLDER: join(root, 'webview') },
@@ -566,7 +579,13 @@ async function checkSessionTools() {
   await click('Pin ' + sessionNames[1]);
   await field('Group by project', true);
   await waitText('.session-group-name', 'Pinned');
+  await waitText('.session-group-name', 'Open tabs');
   await waitText('.session-group .session-group-name', work);
+  assert.equal(await evaluate(name => {
+    const selected = [...document.querySelectorAll('.session-row.selected')].find(row =>
+      row.querySelector('strong')?.textContent === name);
+    return selected?.querySelector('.session-path')?.getAttribute('title');
+  }, sessionNames[2]), work);
   console.log('Session tools passed: output search, bookmark, latest, read-only, live split, reply navigation, switcher, grouping and pins.');
 }
 
@@ -596,6 +615,117 @@ async function checkInstallSettings() {
   await assert.rejects(invoke('install_hermes', { sha256: hermes.sha256 }), /installer changed/i);
   console.log('Publisher downloads passed: Claude native binary and checksum, Hermes official bootstrap and destination paths, tampered script rejected.');
 }
+
+async function checkTeam() {
+  const release = process.env.DECK_GJC_0102;
+  const psmux = teamEngine;
+  assert(release && psmux);
+  const binaryDir = join(root, "한글 Deck's binaries");
+  await mkdir(binaryDir);
+  const binary = join(binaryDir, 'gjc.exe');
+  await copyFile(release, binary);
+  const runtime = await registerFixture(binary, '0.10.2', `Smoke runtime ${suffix}-team`, true);
+  assert.equal(runtime.version, '0.10.2');
+  assert.equal((await overview()).team_available, true);
+  await send('Page.reload', { ignoreCache: true });
+  await click('＋ New Session');
+  await field('Runtime version', runtime.id);
+  await field('GJC Team (native Windows)', true);
+  await click('Close dialog');
+  const sandbox = join(root, 'team-agent');
+  await mkdir(sandbox);
+  const git = execFileSync('where.exe', ['git.exe'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0];
+  const path = [git.replace(/\\[^\\]+$/, ''), process.env.SystemRoot + '\\System32', process.env.SystemRoot].join(';');
+  const env = {
+    USERPROFILE: sandbox, HOME: sandbox, APPDATA: sandbox,
+    PATH: path, GJC_CODING_AGENT_DIR: sandbox, GJC_CONFIG_DIR: '.gjc-smoke',
+    GJC_MODEL_PRESET_REGISTRY_DISABLED: '1', NO_PROXY: '127.0.0.1,localhost',
+  };
+  const exec = promisify(execFile);
+  const bridge = join(dirname(psmux), 'deck-team-mux.exe');
+  const localEnv = { ...process.env, ...env, GJC_TMUX_COMMAND: bridge, GJC_TEAM_TMUX_COMMAND: bridge,
+    DECK_TEAM_GJC: binary,
+    GJC_TEAM_WORKER_COMMAND: "'" + binary.replaceAll("'", "''") + "'" };
+  const data = (await overview()).data_directory;
+  const id = crypto.randomUUID();
+  const label = 'deck-' + id;
+  let session;
+  let psmuxHome;
+  const runMux = args => exec(psmux, args, {
+    cwd: work, env: { ...localEnv, PSMUX_DATA_DIR: psmuxHome, PSMUX_NO_WARM: '1' }, timeout: 5000, windowsHide: true,
+  });
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: work });
+    execFileSync('git', ['-c', 'user.name=Deck Fixture', '-c', 'user.email=fixture@localhost', 'commit', '--allow-empty', '-qm', 'Team fixture'], { cwd: work });
+    execFileSync(binary, ['config', 'set', 'startup.checkUpdate', 'false'], { cwd: work, env: localEnv });
+    execFileSync(binary, ['config', 'set', 'tools.discoveryMode', 'off'], { cwd: work, env: localEnv });
+    await writeFile(join(sandbox, 'models.yml'), `providers:
+  deck-team:
+    baseUrl: http://127.0.0.1:${mock.address().port}/v1
+    api: openai-completions
+    auth: none
+    models:
+      - id: mock-local
+        name: Deck Team Mock
+        contextWindow: 128000
+        maxTokens: 1024
+modelBindings:
+  modelRoles:
+    default: deck-team/mock-local
+`);
+    const launch = { id, name: 'Smoke team ' + suffix, cwd: work, runtime_id: runtime.id, team: true,
+      rows: 42, cols: 170, env: { ...env, PSMUX_DATA_DIR: join(root, 'should-not-use') },
+      extra: ['--model', 'deck-team/mock-local'] };
+    await writeFile(psmux, 'tampered Team fixture');
+    await assert.rejects(invoke('start_session', { launch }), /Team engine hash mismatch/);
+    await copyFile(process.env.DECK_TEAM_PSMUX, psmux);
+    session = await invoke('start_session', { launch });
+    assert.equal(session.team, true);
+    const teamRegistry = (await readdir(data)).find(name => name.startsWith('team-'));
+    assert(teamRegistry);
+    psmuxHome = join(data, teamRegistry);
+    await terminalOutput(session.id, /GJC Forge|Deck Team Mock|gjc v0\.10\.2/i);
+    const { stdout: current } = await runMux(['display-message', '-p', '-t', label, '#{pane_id}']);
+    assert.match(current.trim(), /^%\d+$/);
+    const teamEnv = { ...localEnv, PSMUX_DATA_DIR: psmuxHome, TMUX_PANE: current.trim(),
+      GJC_TMUX_ACTIVE_SESSION: label, GJC_SESSION_ID: label };
+    const { stdout: result } = await exec(binary, ['team', '2:executor', '--json', 'Deck native Team fixture. Reply with a short message.'], {
+      cwd: work, env: teamEnv, timeout: 25000, windowsHide: true,
+    });
+    const receipt = JSON.parse(result);
+    assert.equal(receipt.ok, true);
+    assert.equal(receipt.tmux_session, label);
+    assert.equal(receipt.worker_count, 2);
+    const { stdout: panes } = await runMux(['list-panes', '-t', label, '-F', '#{pane_id}']);
+    const workers = panes.trim().split(/\r?\n/).filter(id => id !== current.trim());
+    assert.equal(workers.length, 2);
+    try {
+      await eventually(() => teamWorkerRequests.size === 2, 'both native Team workers reached the local model');
+    } catch (error) {
+      console.error({ modelRequests: [...teamWorkerRequests], workerPanes: workers });
+      throw error;
+    }
+    const workerPids = await Promise.all(workers.map(worker => runMux(['display-message', '-p', '-t', worker, '#{pane_pid}'])));
+    const serverPid = (await readFile(join(psmuxHome, label + '.pid'), 'utf8')).match(/^\s*(\d+)/)?.[1];
+    const pids = [serverPid, ...workerPids.map(value => value.stdout.trim())].map(Number);
+    assert(pids.every(pid => Number.isInteger(pid) && pid > 0));
+    await invoke('resize_terminal', { id: session.id, rows: 32, cols: 110 });
+    await invoke('close_terminal', { id: session.id });
+    session = undefined;
+    await assert.rejects(stat(psmuxHome), { code: 'ENOENT' });
+    await assert.rejects(runMux(['has-session', '-t', label]));
+    for (const pid of pids) {
+      await eventually(() => {
+        try { process.kill(pid, 0); } catch (error) { if (error.code === 'ESRCH') return true; throw error; }
+        return false;
+      }, 'native Team process cleanup');
+    }
+    assert.match((await overview()).sessions.find(value => value.id === id)?.version ?? '', /^0\.10\.2$/);
+    console.log('Native Team smoke passed: two real GJC workers called the loopback router and were cleaned up.');
+  } finally {
+    if (session) await invoke('close_terminal', { id: session.id }).catch(() => {});
+  }
+}
 async function stop() {
   const closed = new Promise(resolve => app.once('exit', resolve));
   try { await invoke('quit', {}); } catch { /* The WebView can close before the reply. */ }
@@ -603,12 +733,145 @@ async function stop() {
   browser.close();
 }
 
+async function checkExternalHistory(binary, version) {
+  const agent = join(root, `한글 external ${version}`);
+  const sessions = join(agent, 'sessions', 'external work');
+  await mkdir(sessions, { recursive: true });
+  const env = { ...process.env, GJC_CODING_AGENT_DIR: agent, GJC_MODEL_PRESET_REGISTRY_DISABLED: '1' };
+  const exec = promisify(execFile);
+  await exec(binary, ['config', 'set', 'startup.checkUpdate', 'false'], { cwd: work, env, timeout: 12000 });
+  await exec(binary, ['config', 'set', 'tools.discoveryMode', 'off'], { cwd: work, env, timeout: 12000 });
+  await mkdir(join(agent, 'onboarding'), { recursive: true });
+  await writeFile(join(agent, 'onboarding', 'frictionless.json'), JSON.stringify({ version: 1, decision: 'skipped' }));
+  await writeFile(join(agent, 'models.yml'), JSON.stringify({
+    providers: { 'deck-history': { baseUrl: `http://127.0.0.1:${mock.address().port}/v1`,
+      api: 'openai-completions', auth: 'none', models: [{ id: 'mock-local', name: 'Deck History Mock', contextWindow: 128000, maxTokens: 1024 }] } },
+    modelBindings: { modelRoles: { default: 'deck-history/mock-local' } },
+  }));
+  await exec(binary, ['--session-dir', sessions, '--model', 'deck-history/mock-local', '-p', 'Deck original external record'],
+    { cwd: work, env, timeout: 18000, windowsHide: true });
+  const file = (await readdir(sessions)).find(name => name.endsWith('.jsonl'));
+  assert(file, 'GJC outside Deck created history');
+  const path = join(sessions, file);
+  const history = await invoke('list_gjc_history', { agentDirectory: agent });
+  const entry = history.entries.find(item => item.source.path.toLowerCase() === path.toLowerCase());
+  assert(entry);
+  const inspected = await invoke('inspect_gjc_history', { path, agentDirectory: agent });
+  assert.equal(inspected.source.session_id, entry.source.session_id);
+  const runtime = await registerFixture(binary, version, 'External history ' + version, true);
+  if (version === '0.10.2') {
+    await send('Page.reload', { ignoreCache: true });
+    await click('＋ New Session');
+    await click('Open GJC history');
+    await field('GJC runtime', runtime.id);
+    await field('Original GJC agent directory', agent);
+    await click('Find sessions');
+    await field('Existing conversation', entry.source.path);
+    await waitText('dialog[open] .notice .path', file);
+    await click('Close dialog');
+  }
+  const launch = { id: crypto.randomUUID(), name: 'External ' + version, runtime_id: runtime.id,
+    cols: 110, rows: 30, external_history: entry.source };
+  const first = await invoke('start_session', { launch });
+  await terminalOutput(first.id, /Deck (?:loopback fixture reply|History Mock)|GJC Forge/i);
+  await assert.rejects(invoke('start_session', { launch: { ...launch, id: crypto.randomUUID() } }), /other Deck tab/);
+  externalContextSeen = false;
+  await invoke('write_terminal', { id: first.id, data: 'Deck follow-up from imported record\r' });
+  await eventually(async () => {
+    await invoke('terminal_events', { id: first.id });
+    return externalContextSeen && (await readFile(path, 'utf8')).includes('Deck follow-up from imported record');
+  }, 'GJC appended to the original file and used prior context');
+  await invoke('close_terminal', { id: first.id });
+  const reopened = await invoke('start_session', { launch: { ...launch, id: crypto.randomUUID(), resume_from: first.id } });
+  assert.equal(reopened.resume_source_id, first.id);
+  await invoke('close_terminal', { id: reopened.id });
+  assert.equal((await overview()).sessions.filter(session =>
+    session.external_history?.path.toLowerCase() === path.toLowerCase()).length, 1);
+  assert.deepEqual((await readdir(sessions)).filter(name => name.endsWith('.jsonl')), [file]);
+  console.log(`External history verified with GJC ${version}: original context, file and Deck row were reused.`);
+}
+
+async function checkRouterYaml() {
+  const binary = process.env.DECK_GJC_0102;
+  assert(binary, 'Set DECK_GJC_0102 to run the WebView YAML smoke');
+  const runtime = await registerFixture(binary, '0.10.2', 'Router YAML fixture', true);
+  const profile = await invoke('save_router', { profile: {
+    id: '', name: 'YAML Router fixture', scheme: 'http', host: '127.0.0.1', port: mock.address().port,
+    openai_path: '/v1', anthropic_path: null, model: '', enabled: true, authentication: 'none',
+    allow_remote: false, created_at: 0, updated_at: 0,
+  } });
+  const models = join(root, '한글 original models.yml');
+  const config = join(root, 'original config.yml');
+  const baselineModels = 'providers:\n  deck-router:\n    models:\n      - id: mock-local\n        contextWindow: 128000\n        maxTokens: 1024\n';
+  const baselineConfig = 'tools:\n  discoveryMode: off\n';
+  await writeFile(models, baselineModels);
+  await writeFile(config, baselineConfig);
+  const name = 'Router YAML ' + suffix;
+  const preset = { name, runtime_id: runtime.id, router_id: profile.id, anthropic: false,
+    models_template: models, config_template: config, provider: 'deck-router', default_model: 'mock-local',
+    models: [], context: 128000, max_output: 1024, location: 'Workspace', history_root: '' };
+  await invoke('save_yaml_preset', { preset });
+  await send('Page.reload', { ignoreCache: true });
+  await click('＋ New Session');
+  await click('Router YAML');
+  await waitText('dialog[open] select option', name);
+  await field('Saved YAML preset', name);
+  await field('Working directory', work);
+  await click('Refresh Router models');
+  await waitText('dialog[open] [role="status"]', '2 models');
+  await click('Start YAML session');
+  await waitText('.terminal-pane:not([hidden]) .xterm-rows', 'mock-local');
+  await terminalInput('Reply with a WebView YAML fixture');
+  await waitText('.terminal-pane:not([hidden]) .xterm-rows', 'Deck loopback fixture reply');
+  const snapshot = (await overview()).sessions.find(session => session.name === name);
+  assert(snapshot?.native_gjc);
+  const { agent_directory: agent, session_directory: history } = snapshot.native_gjc;
+  assert(resolve(history).toLowerCase().startsWith(join(work, '.gjc', 'deck-sessions').toLowerCase() + '\\'));
+  const generated = await readFile(join(agent, 'models.yml'), 'utf8');
+  assert(generated.includes('old-model') && generated.includes('mock-local'));
+  assert.match(await readFile(join(agent, 'config.yml'), 'utf8'), /default: deck-router\/mock-local/);
+  assert.equal(await readFile(models, 'utf8'), baselineModels);
+  assert.equal(await readFile(config, 'utf8'), baselineConfig);
+  const entry = await eventually(async () => (await invoke('list_managed_gjc_history', { id: snapshot.id })).entries[0],
+    'managed YAML conversation on disk');
+  servedModels = ['mock-local', 'new-model'];
+  const launch = { id: crypto.randomUUID(), name, runtime_id: runtime.id, cwd: work, rows: 24, cols: 80,
+    yaml: { preset, catalog: ['mock-local', 'old-model'] } };
+  await assert.rejects(invoke('start_session', { launch }), /Router catalog changed/);
+  assert.equal(await readFile(join(agent, 'models.yml'), 'utf8'), generated);
+  await invoke('close_terminal', { id: snapshot.id });
+  const reopened = await invoke('start_session', { launch: { ...launch, yaml: undefined, resume_from: snapshot.id,
+    external_history: entry.source } });
+  assert.equal(reopened.resume_source_id, snapshot.id);
+  assert.equal(reopened.native_gjc.agent_directory, agent);
+  assert.equal((await overview()).sessions.filter(row => row.name === name).length, 1);
+  await invoke('close_terminal', { id: reopened.id });
+  console.log('WebView Router YAML smoke passed: persisted preset, real GJC inference, isolated YAML, stale catalog rejection and history resume.');
+}
+
 try {
+  if (process.env.DECK_TEAM_ONLY === '1') {
+    assert(process.env.DECK_TEAM_PSMUX, 'Set DECK_TEAM_PSMUX to the official psmux executable');
+    const engineDir = join(root, 'team-engine');
+    await mkdir(engineDir);
+    teamEngine = join(engineDir, 'psmux.exe');
+    await copyFile(process.env.DECK_TEAM_PSMUX, teamEngine);
+    await copyFile(join(dirname(application), 'deck-team-mux.exe'), join(engineDir, 'deck-team-mux.exe'));
+  }
   send = await start();
   await ready();
   assert.equal((await overview()).data_directory.toLowerCase(), join(root, 'deck-data').toLowerCase(),
     'Use a test-fixture executable so the smoke suite can isolate its database and logs');
-  if (process.env.DECK_INSTALL_ONLY === '1') {
+  if (process.env.DECK_WEB_YAML_ONLY === '1') {
+    await checkRouterYaml();
+  } else if (process.env.DECK_EXTERNAL_HISTORY_ONLY === '1') {
+    assert(optionalGjc.some(([, binary]) => binary));
+    for (const [version, binary] of optionalGjc) {
+      if (binary) await checkExternalHistory(binary, version);
+    }
+  } else if (process.env.DECK_TEAM_ONLY === '1') {
+    await checkTeam();
+  } else if (process.env.DECK_INSTALL_ONLY === '1') {
     await checkInstallSettings();
   } else if (process.env.DECK_GJC_PRESET_ONLY === '1') {
     await registerFixture(pathB, '0.20.0', `Smoke runtime ${suffix}-fixture`);
@@ -943,7 +1206,7 @@ try {
     } else console.log(`GJC ${version} started its interactive TUI through Agent Deck. No inference requested.`);
   }
   }
-  if (process.env.DECK_INSTALL_ONLY !== '1') {
+  if (process.env.DECK_INSTALL_ONLY !== '1' && process.env.DECK_TEAM_ONLY !== '1' && process.env.DECK_EXTERNAL_HISTORY_ONLY !== '1' && process.env.DECK_WEB_YAML_ONLY !== '1') {
     await presetSmoke();
     await checkInstallSettings();
   }

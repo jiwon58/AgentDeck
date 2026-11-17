@@ -105,6 +105,7 @@ export function TerminalPane({ tab, active, pane, autoFocus, onActivate, prefere
     let sequence = 0;
     let runningAgent: Agent | undefined;
     let runningVersion: string | undefined;
+    let nativeTeam = false;
     let reported: WorkStatus | undefined;
     let hasNativeStatus = false;
     let renderStatus: ReturnType<typeof setTimeout> | undefined;
@@ -131,7 +132,7 @@ export function TerminalPane({ tab, active, pane, autoFocus, onActivate, prefere
       return true;
     });
     const inspectRenderedStatus = () => {
-      if (runningAgent !== 'gajae' || runningVersion !== '0.10.2' || hasNativeStatus) return;
+      if (nativeTeam || runningAgent !== 'gajae' || runningVersion !== '0.10.2' || hasNativeStatus) return;
       clearTimeout(renderStatus);
       renderStatus = setTimeout(() => {
         if (disposed || !connected || hasNativeStatus) return;
@@ -220,6 +221,7 @@ export function TerminalPane({ tab, active, pane, autoFocus, onActivate, prefere
         if (disposed) { await api.close(id); return; }
         runningAgent = session.agent;
         runningVersion = session.version;
+        nativeTeam = session.team;
         started = connected = true;
         update(id, { session, status: 'running', launch });
         onStart(session);

@@ -1,5 +1,11 @@
 # Agent compatibility
 
+## Native Windows Team
+
+The Team option targets Windows x64, GJC 0.10.2 and the pinned psmux 3.4.0 binary. Deck starts GJC inside a fresh multiplexer session. GJC discovers the real pane and registers its Team ownership metadata through the upstream runtime. This avoids the unsupported GJC-managed `--tmux` launch path, which can reject native Windows session identity. Other GJC versions and other harnesses require separate Team verification. [GJC 0.10.2 Team runtime](https://github.com/Yeachan-Heo/gajae-code/blob/v0.10.2/packages/coding-agent/src/gjc-runtime/team-runtime.ts) · [GJC 0.10.2 Team skill](https://github.com/Yeachan-Heo/gajae-code/blob/v0.10.2/packages/coding-agent/src/defaults/gjc/skills/team/SKILL.md)
+
+The compiled GJC 0.10.2 worker launcher can resolve to a Bun virtual path on Windows. Deck supplies the approved GJC binary via `GJC_TEAM_WORKER_COMMAND`, which takes precedence in that release, and points GJC’s multiplexer commands at the packaged psmux executable. GJC retains control of Team tasks, working trees and worker model configuration.
+
 | Agent | Launch and version | Router and configuration |
 | --- | --- | --- |
 | Gajae-Code 0.10.2 | Official Windows x64 binary returned `gjc/0.10.2`. Interactive command is `gjc.exe`. Help lists `--continue` and displays `--resume=<value>`. | Use a reviewed manual launch profile. Tagged docs describe `~/.gjc/agent`, `GJC_CODING_AGENT_DIR` and `GJC_CONFIG_DIR`. Router transport and `VLLM_BASE_URL` are unverified for this version. |

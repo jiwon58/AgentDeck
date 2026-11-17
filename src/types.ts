@@ -21,11 +21,15 @@ export interface Session {
   router_revision: number | null; model: string; created_at: number;
   resume_source_id: string | null;
   gjc?: GjcHistory | null;
+  team: boolean;
+  external_history?: GjcHistorySource | null;
+  native_gjc?: { agent_directory: string; session_directory: string } | null;
 }
 export interface Preferences { font_size: number; scrollback: number; last_runtime: string; last_cwd: string }
 export interface SessionLayout { grouped: boolean; pinned: string[] }
 export interface Overview {
   app_version: string;
+  team_available: boolean;
   roots: { id: string; agent: Agent; path: string }[];
   runtimes: Runtime[]; routers: Router[]; sessions: Session[]; preferences: Preferences; data_directory: string; log_file: string | null;
   gjc_presets: GjcPreset[];
@@ -36,10 +40,20 @@ export interface Launch {
   extra: string[]; env: Record<string, string>; token: string; manual_router: boolean;
   manual_protocol?: 'openai' | 'anthropic'; cols: number; rows: number;
   resume_from?: string;
+  team?: boolean;
+  yaml?: { preset: GjcYamlPreset; catalog: string[] };
+  external_history?: GjcHistorySource;
   gjc?: { preset_id: string; preview_fingerprint: string; model?: string; stream_timeout?: string;
     history_mode?: GjcHistoryMode; history_path?: string };
 }
+export interface GjcYamlPreset {
+  name: string; runtime_id: string; router_id: string; anthropic: boolean;
+  models_template: string; config_template: string; provider: string; default_model: string;
+  models: string[]; context: number; max_output: number; location: 'AppData' | 'Custom' | 'Workspace'; history_root: string;
+}
 export type GjcHistoryMode = 'default' | 'existing_workspace' | 'custom';
+export interface GjcHistorySource { path: string; agent_directory: string; session_id: string }
+export interface GjcHistoryEntry { source: GjcHistorySource; cwd: string; title: string; modified_at: number }
 export interface GjcHistory {
   preset_id: string; preset_revision: number; agent_directory: string | null; session_directory: string | null;
   history_mode: GjcHistoryMode; models_fingerprint: string | null;
@@ -56,6 +70,7 @@ export interface GjcPreset {
 }
 export interface GjcPreview {
   fingerprint: string;
+  team?: { executable: string; sha256: string; bridge: string } | null;
   plan: {
     history: GjcHistory; runtime_id: string; executable: string; executable_sha256: string; version: string;
     cwd: string; endpoint: string | null; provider_id: string; model: string; argv: string[];

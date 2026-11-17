@@ -116,8 +116,8 @@ pub struct Selection {
 pub struct HistorySnapshot {
     pub preset_id: String,
     pub preset_revision: u64,
-    agent_directory: Option<PathBuf>,
-    session_directory: Option<PathBuf>,
+    pub agent_directory: Option<PathBuf>,
+    pub session_directory: Option<PathBuf>,
     pub history_mode: HistoryMode,
     pub models_fingerprint: Option<String>,
     #[serde(default)]
@@ -404,7 +404,7 @@ fn requested_history(preset: &GjcPreset, select: &Selection) -> HistoryMode {
     }
 }
 
-fn default_agent_directory() -> Result<PathBuf> {
+pub fn default_agent_directory() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os(AGENT_DIR).filter(|path| !path.is_empty()) {
         return registry::directory(
             path.to_str()

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api, browse, environment, lines, readable } from './api';
+import { NativeTeam, teamRuntime } from './NativeTeam';
 import type { GjcHistoryMode, GjcPreset, GjcPreview, Launch, Overview, Session } from './types';
 
 const fresh = (): GjcPreset => ({
@@ -43,6 +44,7 @@ function Preview({ preview }: { preview: GjcPreview }) {
       <dt>Executable</dt><dd>{plan.executable}</dd>
       <dt>Runtime</dt><dd>{plan.version} · {plan.runtime_id}</dd>
       <dt>SHA-256</dt><dd>{plan.executable_sha256}</dd>
+      {preview.team && <><dt>Native Team engine</dt><dd>{preview.team.executable}<br />{preview.team.sha256}<br />{preview.team.bridge}</dd></>}
       <dt>Working directory</dt><dd>{plan.cwd}</dd>
       <dt>Router</dt><dd>{plan.endpoint || 'GJC configuration'} · {plan.protocol}</dd>
       <dt>Provider / model</dt><dd>{plan.provider_id || 'Default'} / {plan.model || 'Default'}</dd>
@@ -202,6 +204,7 @@ export function GjcPresetLaunch({ data, previous, resume, runningPaths, onLaunch
   const [timeout, setTimeout] = useState('');
   const [history, setHistory] = useState('');
   const [historyPath, setHistoryPath] = useState('');
+  const [team, setTeam] = useState(Boolean(previous?.team));
   const [extra, setExtra] = useState('');
   const [env, setEnv] = useState('');
   const [token, setToken] = useState('');
@@ -215,6 +218,7 @@ export function GjcPresetLaunch({ data, previous, resume, runningPaths, onLaunch
   const plan = (preset: GjcPreset): Launch => ({
     ...baseLaunch(preset, cwd), token, name: name.trim() || preset.name,
     resume_from: resume ? previous?.id : undefined, extra: lines(extra), env: environment(env),
+    team: data.team_available && teamRuntime(runtime) && team,
     gjc: { preset_id: preset.id, preview_fingerprint: preview?.fingerprint || '',
       model: model || undefined, stream_timeout: timeout || undefined,
       history_mode: !resume && history ? history as GjcHistoryMode : undefined,
@@ -235,7 +239,7 @@ export function GjcPresetLaunch({ data, previous, resume, runningPaths, onLaunch
     {resume && <p className="notice">Choose the conversation to continue in the GJC picker. This terminal stays attached to the saved session. Enter your router credential again if required.</p>}
     <fieldset className="stack" disabled={busy}>
       <label>GJC preset<select required value={id} disabled={resume} onChange={e => {
-        setId(e.target.value); setPreview(undefined); setToken(''); setModel(''); setTimeout(''); setHistory(''); setHistoryPath('');
+        setId(e.target.value); setPreview(undefined); setToken(''); setModel(''); setTimeout(''); setHistory(''); setHistoryPath(''); setTeam(false);
       }}>
         <option value="">Select a preset</option>
         {presets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -244,6 +248,7 @@ export function GjcPresetLaunch({ data, previous, resume, runningPaths, onLaunch
       <Directory label="Working directory" value={cwd} change={value => { setCwd(value); setPreview(undefined); }} readOnly={resume} onError={setError} />
       {runningPaths.some(path => path.toLowerCase() === cwd.toLowerCase()) && <p className="notice">An active session uses this directory. Concurrent edits can conflict.</p>}
       {preset && runtime && <small>{runtime.version} · {router?.name || 'GJC settings'} · {preset.model || 'Default model'}</small>}
+      {teamRuntime(runtime) && <NativeTeam available={data.team_available} checked={team} onChange={value => { setTeam(value); setPreview(undefined); }} />}
       <details><summary>Advanced session overrides</summary>
         {!resume && <label>Session name<input value={name} placeholder={preset?.name} onChange={e => setName(e.target.value)} /></label>}
         {preset?.auto_config_enabled && <>
